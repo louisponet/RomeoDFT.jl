@@ -14,9 +14,11 @@ Pkg.add(["Plots","LaTeXStrings","UnicodePlots","Revise"])
 Pkg.add(url="https://github.com/louisponet/RomeoDFT.jl")
 Pkg.update()
 
-conf = Dict("searchers_directory" => config_path("searchers"))
-open(config_path(paths[1]), "w") do f
-    TOML.print(f, conf)
+if !ispath(config_path(paths[1]))
+    conf = Dict("searchers_directory" => config_path("searchers"))
+    open(config_path(paths[1]), "w") do f
+        TOML.print(f, conf)
+    end
 end
 
 using RemoteHPC
