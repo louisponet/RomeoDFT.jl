@@ -46,7 +46,7 @@ end
 Searcher commands
 """
 module searcher
-    using ..RomeoDFT: searchersdir, searcherpath, orchestrator_eval, setup_search
+    using ..RomeoDFT: searchers_dir, searcher_name, orchestrator_eval, setup_search
     using Comonicon
     """
     load a searcher.
@@ -57,7 +57,7 @@ module searcher
     """
     @cast function load(dir::String)
         if !isabspath(dir)
-            dir = searchersdir(dir)
+            dir = searchers_dir(dir)
         end
         if !ispath(dir)
             error("No such file or directory")
@@ -73,7 +73,7 @@ module searcher
     - `dir`: directory where to find searcher
     """
     @cast function unload(dir::String)
-        return print(orchestrator_eval("unload_searcher(\"$(searcherpath(dir))\")"))
+        return print(orchestrator_eval("unload_searcher(\"$(searcher_name(dir))\")"))
     end
 
     """
@@ -294,7 +294,6 @@ end
 @cast server
 
 
-using ..RomeoDFT: orchestrator_eval
 """
 configure interactively Servers, Environments, Executables and PseudoSets.
 """
@@ -313,7 +312,7 @@ configure interactively Servers, Environments, Executables and PseudoSets.
     end
 
     if id == 1
-        println("Current searchers directory: ", SEARCHERS_DIR[])
+        println("Current searchers directory: ", searchers_dir())
         id = request("Change?", RadioMenu(["yes", "no"]))
         if id == 2
             return
@@ -330,16 +329,17 @@ configure interactively Servers, Environments, Executables and PseudoSets.
             if isdir(t)
                 d = t
             else
-                @error "$t no such directory. Try again"
+                id = request("$t no such directory. Create?", RadioMenu(["yes", "no"]))
+                if id == 1
+                    mkdir(t)
+                    d = t
+                else
+                    @error "$t no such directory. Try again"
+                end
             end
         end
         open(config_path("config.toml"), "w") do f
             TOML.print(f, Dict("searchers_directory" => d))
-        end
-        try
-            orchestrator_eval("set_searchers_dir()")
-        catch
-            nothing
         end
     elseif id == 2
         RemoteHPC.configure()

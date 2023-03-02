@@ -50,6 +50,9 @@ function version_convert(v, type_mods, id)
     end
 end
 
+Base.convert(::Type{T}, s) where T<:State = State(s.occupations)
+Base.convert(::Type{T}, s::T) where T<:State = State(s.occupations)
+
 function RemoteHPC.load(rootdir::String, l::AbstractLedger)
     ledger_version = jldopen(joinpath(rootdir, "ledger.jld2"), "r") do f
         if haskey(f, "version")
@@ -62,7 +65,24 @@ function RemoteHPC.load(rootdir::String, l::AbstractLedger)
     @assert ledger_version in versions() "Unknown version: $ledger_version"
 
     type2mod = type_mods()
-    ledger = jldopen(joinpath(rootdir, "ledger.jld2"), "r") do f
+
+    alltypes = DataType[]
+    for (k, mods) in type2mod
+        for m in mods
+            push!(alltypes, getfield(m, k))
+        end
+    end
+    typemap = Dict([replace(string(t), "RomeoDFT" => "Occupations") => t for t in alltypes])
+    for t in keys(type2mod)
+        typemap["Occupations." * string(t)] = getfield(RomeoDFT, t)
+    end
+    typemap["Occupations.TrialOrigin"] = RomeoDFT.TrialOrigin
+    typemap["Occupations.MixingMode"] = RomeoDFT.MixingMode
+    for sys in filter(x -> isdefined(RomeoDFT, x) && getfield(RomeoDFT, x) isa DataType && getfield(RomeoDFT, x) <: System, names(RomeoDFT, all=true))
+        typemap["Occupations."*string(sys)] = getfield(RomeoDFT, sys)
+    end
+    
+    ledger = jldopen(joinpath(rootdir, "ledger.jld2"), "r", typemap=typemap) do f
         l.sleep_time = get(f, "sleep_time", l.sleep_time)
         l.mode = get(f, "mode", l.mode)
         l.mode = get(f, "searcher_stage", l.mode)

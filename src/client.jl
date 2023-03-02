@@ -1,5 +1,5 @@
 function orchestrator_port()
-    pp = serverdir("port")
+    pp = config_path("port")
     return parse(Int, read(pp, String))
 end
 function orchestrator_eval(str)
@@ -24,11 +24,11 @@ function start_orchestrator()
     try
         orchestrator_eval("loaded_searchers()")
     catch
-        t = mtime(serverdir("log.log")) 
-        r = run(Cmd(Cmd(["julia", "--project=$(serverdir())", "--startup-file=no", "-e",  "using Revise; using Plots; using LaTeXStrings; using UnicodePlots; using RomeoDFT; RomeoDFT.run_orchestrator()", "&>", serverdir("log.log")]), detach=true, ignorestatus=true), wait=false)
+        t = mtime(config_path("log.log")) 
+        r = run(Cmd(Cmd(["julia", "--project=$(config_path())", "--startup-file=no", "-e",  "using Revise; using Plots; using LaTeXStrings; using UnicodePlots; using RomeoDFT; RomeoDFT.run_orchestrator()", "&>", config_path("log.log")]), detach=true, ignorestatus=true), wait=false)
         p = ProgressMeter.ProgressUnknown("Starting orchestrator. This takes a while the first time..."; spinner=true)
 
-        while process_running(r) && mtime(serverdir("log.log")) == t
+        while process_running(r) && mtime(config_path("log.log")) == t
             ProgressMeter.next!(p, spinner="⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
             sleep(0.1)
         end

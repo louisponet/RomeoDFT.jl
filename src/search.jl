@@ -35,7 +35,7 @@ Base.@kwdef mutable struct Searcher <: AbstractLedger
 end
 
 function Searcher(dir::AbstractString; kwargs...)
-    dir = isdir(dir) ? dir : searchersdir(dir)
+    dir = isdir(dir) ? dir : searchers_dir(dir)
     Searcher(; rootdir = abspath(dir), kwargs...)
 end
 Overseer.ledger(l::Searcher) = l.ledger
@@ -80,30 +80,27 @@ function RemoteHPC.load(l::Searcher;
     return load(joinpath(l.rootdir, string(version)), l)
 end
 
-function searcherpath(s::AbstractString)
-    dirs = splitpath(s)
-    fid = findfirst(x -> x == "searchers", dirs)
-    if fid !== nothing 
-        return join(dirs[fid + 1:end], "/")
-    elseif !isabspath(s)
-        return s
+function searcher_name(s::AbstractString)
+    splt = strip.(split(s, searchers_dir()), '/')
+    if length(splt) > 1
+        return splt[end]
     else
-        return dirs[end]
+        return s
     end
 end
-searcherpath(m::AbstractLedger) = searcherpath(m.rootdir)
+searcher_name(m::AbstractLedger) = searcher_name(m.rootdir)
 
 function local_dir(m::AbstractLedger, e) 
     return abspath(joinpath(m.rootdir, "job_backups","$(Entity(e).id)"))
 end
 
 function remote_dir(m::AbstractLedger, e) 
-    fdir = searcherpath(m)
-    return joinpath("RomeoDFTSearch", fdir, "$(Entity(e).id)")
+    fdir = searcher_name(m)
+    return joinpath("RomeoDFT", fdir, "$(Entity(e).id)")
 end
 
 function simname(m)
-    fdir = searcherpath(m)
+    fdir = searcher_name(m)
     return replace(fdir, "/" => "_")
 end
 
@@ -291,7 +288,7 @@ function setup_search(name, scf_file, structure_file=scf_file;
                       stopping_n_generations =3,
                       kwargs...)
                       
-    dir = searchersdir(name)
+    dir = searchers_dir(name)
     
     if ispath(joinpath(dir, string(DATABASE_VERSION), "ledger.jld2"))
         choice = request("Overwrite previous results?", RadioMenu(["no", "yes"]))
@@ -450,7 +447,7 @@ function plot_states(io::IO, l::Searcher)
 end
 
 function status(io::IO, l::Searcher)
-    header = "$(searcherpath(l)) @ Generation($(maximum(x->x.generation, l[Generation], init=0)))"
+    header = "$(searcher_name(l)) @ Generation($(maximum(x->x.generation, l[Generation], init=0)))"
     horstring = "+" * "-"^(length(header)+2) * "+"
     println(io, horstring)
     println(io, "| ", header, " |")
@@ -568,87 +565,87 @@ end
  
 function RemoteHPC.start(l; kwargs...)
     stop(l) # Should be noop 
-    l.loop = Threads.@spawn loop(l; kwargs...)
+    Main.Revise.revise()
+    Base.invokelatest() do
+        l.loop = Threads.@spawn loop(l; kwargs...)
+    end
 end
 
 function loop(l::Searcher; verbosity=0, sleep_time=l.sleep_time)
-    Revise.revise()
-    Base.invokelatest() do
-        l.sleep_time = sleep_time
-        http_logpath = joinpath(l.rootdir, "HTTP.log")
-        logpath = joinpath(l.rootdir, "log.log")
+    l.sleep_time = sleep_time
+    http_logpath = joinpath(l.rootdir, "HTTP.log")
+    logpath = joinpath(l.rootdir, "log.log")
 
-        prevledger = joinpath(storage_dir(l), "ledger.jld2")
-        if ispath(prevledger)
-            cp(prevledger, joinpath(storage_dir(l),"$(now())_bak.jld2"))
+    prevledger = joinpath(storage_dir(l), "ledger.jld2")
+    if ispath(prevledger)
+        cp(prevledger, joinpath(storage_dir(l),"$(now())_bak.jld2"))
+    end
+    
+    logger = RemoteHPC.TimestampLogger(RemoteHPC.TeeLogger(RemoteHPC.NotHTTPLogger(RemoteHPC.TimeBufferedFileLogger(logpath, interval=0.0001)),
+                                                           RemoteHPC.HTTPLogger(RemoteHPC.TimeBufferedFileLogger(http_logpath, interval=0.0001))))
+    simn = simname(l)
+    with_logger(logger) do
+        LoggingExtras.withlevel(LoggingExtras.Debug; verbosity=verbosity) do
+                                   
+            while !isalive(local_server())
+                @error "Local server not alive"
+                sleep(1)
+            end
+            
+            @debugv 2 "[START] Saving" 
+            save(l)
+            @debugv 2 "[STOP] Saving"
+            if length(l[Results]) == 0
+                @debug "Starting search for global minimum state."
+            else
+                @debug "Restarting search for global minimum state."
+            end 
         end
-        
-        logger = RemoteHPC.TimestampLogger(RemoteHPC.TeeLogger(RemoteHPC.NotHTTPLogger(RemoteHPC.TimeBufferedFileLogger(logpath, interval=0.0001)),
-                                                               RemoteHPC.HTTPLogger(RemoteHPC.TimeBufferedFileLogger(http_logpath, interval=0.0001))))
-        simn = simname(l)
+    end
+    if isempty(l[StopCondition])
+        Entity(l, StopCondition())
+    end
+    while !l.stop
+        curt = now()
+        if ispath(logpath) && filesize(logpath) > 1e8
+            write(logpath, "")
+        end
+        if ispath(http_logpath) && filesize(http_logpath) > 1e8
+            write(http_logpath, "")
+        end
         with_logger(logger) do
             LoggingExtras.withlevel(LoggingExtras.Debug; verbosity=verbosity) do
-                                       
-                while !isalive(local_server())
-                    @error "Local server not alive"
-                    sleep(1)
+                if isalive(local_server())
+                    try 
+                        @debugv 1 "[START] Updating" 
+                        RemoteHPC.@timeout 600 update(l)
+                        l.loop_error = false
+                        @debugv 1 "[STOP] Updating" 
+                    catch e
+                        RemoteHPC.log_error(e)
+                        l.loop_error = true
+                    end
                 end
-                
+                while !l.stop &&  round(now() - curt, Second) < Second(l.sleep_time)
+                    sleep(0.5)
+                end
                 @debugv 2 "[START] Saving" 
                 save(l)
-                @debugv 2 "[STOP] Saving"
-                if length(l[Results]) == 0
-                    @debug "Starting search for global minimum state."
-                else
-                    @debug "Restarting search for global minimum state."
-                end 
+                @debugv 2 "[STOP] Saving" 
             end
         end
-        if isempty(l[StopCondition])
-            Entity(l, StopCondition())
-        end
-        while !l.stop
-            curt = now()
-            if ispath(logpath) && filesize(logpath) > 1e8
-                write(logpath, "")
-            end
-            if ispath(http_logpath) && filesize(http_logpath) > 1e8
-                write(http_logpath, "")
-            end
-            with_logger(logger) do
-                LoggingExtras.withlevel(LoggingExtras.Debug; verbosity=verbosity) do
-                    if isalive(local_server())
-                        try 
-                            @debugv 1 "[START] Updating" 
-                            RemoteHPC.@timeout 600 update(l)
-                            l.loop_error = false
-                            @debugv 1 "[STOP] Updating" 
-                        catch e
-                            RemoteHPC.log_error(e)
-                            l.loop_error = true
-                        end
-                    end
-                    while !l.stop &&  round(now() - curt, Second) < Second(l.sleep_time)
-                        sleep(0.5)
-                    end
-                    @debugv 2 "[START] Saving" 
-                    save(l)
-                    @debugv 2 "[STOP] Saving" 
-                end
-            end
-        end
-        @debug "Stopping loop"
-        @info "Stopping all pending and Submitted jobs."
-        @sync for e in @entities_in(l, SimJob)
-            Threads.@spawn begin
-                if state(e.job) ∈ (RemoteHPC.Pending, RemoteHPC.Submitted)
-                    abort(e.job)
-                    l[e] = Submit()
-                end
-            end
-        end
-        l.loop = nothing
-        return l.stop = false
     end
+    @debug "Stopping loop"
+    @info "Stopping all pending and Submitted jobs."
+    @sync for e in @entities_in(l, SimJob)
+        Threads.@spawn begin
+            if state(e.job) ∈ (RemoteHPC.Pending, RemoteHPC.Submitted)
+                abort(e.job)
+                l[e] = Submit()
+            end
+        end
+    end
+    l.loop = nothing
+    return l.stop = false
 end
 

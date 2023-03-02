@@ -20,7 +20,7 @@ end
 
 function load_searcher(p::AbstractString)
     l = load(Searcher(p))
-    n = searcherpath(l)
+    n = searcher_name(l)
     searchers = ORCHESTRATOR[].searchers
     if haskey(searchers, n)
         throw(ArgumentError("Already loaded searcher at $p"))
@@ -163,7 +163,7 @@ end
 function unload_finished()
     ls = collect(values(ORCHESTRATOR[].searchers))
     finished_ls = filter(x -> x.finished, ls)
-    ns = map(x->searcherpath(x), finished_ls)
+    ns = map(x->searcher_name(x), finished_ls)
     if !isempty(ns)
         @debug "Unloading $(length(ns)) finished searchers: $(join(ns, " - "))"
         for (i, n) in enumerate(ns)
@@ -255,14 +255,14 @@ function resume_orchestrator()
 end
 
 function run_orchestrator(;verbosity=0)
-    mkpath(serverdir())
-    logger = RemoteHPC.TimestampLogger(RemoteHPC.TeeLogger(RemoteHPC.NotHTTPLogger(RemoteHPC.TimeBufferedFileLogger(serverdir("log.log"), interval=0.0001)),
-                                                           RemoteHPC.HTTPLogger(RemoteHPC.TimeBufferedFileLogger(serverdir("HTTP.log"), interval=0.0001))))
+    mkpath(config_path())
+    logger = RemoteHPC.TimestampLogger(RemoteHPC.TeeLogger(RemoteHPC.NotHTTPLogger(RemoteHPC.TimeBufferedFileLogger(config_path("log.log"), interval=0.0001)),
+                                                           RemoteHPC.HTTPLogger(RemoteHPC.TimeBufferedFileLogger(config_path("HTTP.log"), interval=0.0001))))
     with_logger(logger) do
         LoggingExtras.withlevel(LoggingExtras.Debug; verbosity=verbosity) do
         try
             # RemoteREPL
-            portpath = serverdir("port")
+            portpath = config_path("port")
             port, server = listenany(Sockets.localhost, 27754)
             write(portpath, "$port")
             @debug "Started Server at $port"
@@ -270,7 +270,7 @@ function run_orchestrator(;verbosity=0)
 
             o = ORCHESTRATOR[] = SearchOrchestrator(Dict{String, Searcher}(), false, false)
             
-            loaded_searchers_path = serverdir("loaded_searchers.txt")
+            loaded_searchers_path = config_path("loaded_searchers.txt")
             if ispath(loaded_searchers_path)
                 rootdirs = readlines(loaded_searchers_path)
                 @debug "Found $(length(rootdirs)) previously loaded Searchers."

@@ -37,7 +37,6 @@ function Overseer.update(::JobCreator, m::AbstractLedger)
         elseif e.generation == e.current_generation
             tot_new += 1
             Threads.@spawn begin
-                fdir = searcherpath(m)
                 simn = simname(m)
                 rem_dir = remote_dir(m, e)
                 loc_dir = local_dir(m, e)
@@ -89,7 +88,6 @@ function Overseer.update(::JobCreator, m::AbstractLedger)
         end
         tot_new += 1
         Threads.@spawn begin
-            fdir = searcherpath(m)
             rem_dir = remote_dir(m, e)
             simn = simname(m)
             loc_dir = local_dir(m, e)
@@ -254,7 +252,7 @@ Submits entities with [`SimJob`](@ref) and [`Submit`](@ref) components.
 struct JobSubmitter <: System end
 function set_server_pseudos!(j::Job, server::Server, simn)
     for a in j.structure.atoms
-        a.pseudo.path = joinpath(abspath(server, joinpath("RomeoDFTSearch", simn, "pseudos/$(a.element.symbol).UPF")))
+        a.pseudo.path = joinpath(abspath(server, joinpath("RomeoDFT", simn, "pseudos/$(a.element.symbol).UPF")))
         a.pseudo.server = server.name
     end
 end
@@ -291,7 +289,7 @@ function Overseer.update(::JobSubmitter, m::AbstractLedger)
             str = m[Simulation][1].template_structure
             calc = m[Simulation][1].template_calculation
         end
-        pseudodir = joinpath("RomeoDFTSearch", searcherpath(m), "pseudos")
+        pseudodir = joinpath("RomeoDFT", searcher_name(m), "pseudos")
         
         for s in [map(x -> x.server, m[ServerInfo].data); local_server().name]
             server = Server(s)
@@ -357,7 +355,7 @@ function Overseer.update(::JobSubmitter, m::AbstractLedger)
                     if !isabspath(jinfo[e].remote_dir)
                         jinfo[e].remote_dir = abspath(server, jinfo[e].remote_dir)
                     else
-                        jinfo[e].remote_dir = abspath(server, "RomeoDFTSearch" * split(jinfo[e].remote_dir, "RomeoDFTSearch")[2])
+                        jinfo[e].remote_dir = abspath(server, "RomeoDFT" * split(jinfo[e].remote_dir, "RomeoDFT")[2])
                     end
 
                     for c in filter(x -> x.run, j.calculations)
@@ -377,13 +375,13 @@ function Overseer.update(::JobSubmitter, m::AbstractLedger)
                     cid = findfirst(x -> occursin("wan", x.name) && x.run, j.calculations)
                     j.environment = server_info.environment
 
-                    set_server_pseudos!(j, local_server(), searcherpath(m))
+                    set_server_pseudos!(j, local_server(), searcher_name(m))
                     local_save(j, jinfo[e].local_dir)
                     j.dir = jinfo[e].remote_dir
                 
 
                     j.server = server_info.server
-                    set_server_pseudos!(j, server, searcherpath(m))
+                    set_server_pseudos!(j, server, searcher_name(m))
 
                     suppress() do
                         return submit(j; fillexecs = false, versioncheck=false, priority = e in m[NSCFSettings] || e in m[BaseCase] ? server_info.priority + 1 : server_info.priority)
