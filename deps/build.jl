@@ -22,8 +22,8 @@ if !ispath(config_path(paths[1]))
 end
 
 using RemoteHPC
-if !RemoteHPC.exists(local_server(), Environment("default"))
-    save(local_server(), Environment(name="default"))
+if !RemoteHPC.exists(Environment("default"))
+    save(Environment(name="default"))
 end
 Pkg.activate(".")
 using RomeoDFT
