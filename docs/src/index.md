@@ -1,14 +1,5 @@
-```@meta
-CurrentModule = RomeoDFT
-```
+# RomeoDFT.jl
 
-# RomeoDFT
+Documentation on how to run global searchers with RomeoDFT.jl.
 
-Documentation for [RomeoDFT](https://github.com/Louis Ponet/RomeoDFT.jl).
-
-```@index
-```
-
-```@autodocs
-Modules = [RomeoDFT]
-```
+Start with [`Installation`](@ref Installation) and then follow the [`Tutorial`](@ref Tutorial).

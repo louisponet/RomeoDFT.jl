@@ -1,0 +1,13 @@
+name = "romeo"
+
+[install]
+completion = true
+quiet = false
+optimize = 2
+
+[sysimg]
+incremental=false
+filter_stdlibs=true
+
+# [sysimg.precompile]
+# execution_file = ["src/GOMEO/precompile.jl"]
