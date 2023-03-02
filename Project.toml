@@ -1,0 +1,9 @@
+name = "RomeoDFT"
+uuid = "87c4fabc-abb4-4467-86a6-1748b5c259fe"
+authors = ["louis ponet<louisponet@epfl.ch>","and contributors",]
+version = "0.1.0"
+
+[deps]
+
+[compat]
+julia = "1.9"
