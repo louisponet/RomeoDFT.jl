@@ -341,7 +341,6 @@ function Overseer.update(::JobSubmitter, m::AbstractLedger)
     entities_to_submit = sort(collect(@entities_in(sub)), by = x->x.id)[1:min(length(sub), 20)]
     @sync for e in entities_to_submit
         if !(e in m[SimJob])
-            pop!(sub, e)
             continue
         end
         Threads.@spawn begin
@@ -395,10 +394,10 @@ function Overseer.update(::JobSubmitter, m::AbstractLedger)
                     end
                 end
             end
-            lock_() do
-                pop!(sub, e)
-            end
         end
+    end
+    for e in entities_to_submit
+        pop!(sub, e)
     end
     @debugv 2 "[STOP] JobSubmitter"
 end
@@ -438,7 +437,7 @@ function Overseer.update(::JobMonitor, m::AbstractLedger)
                 e.running += dt
                 cur_running = Client.last_running_calculation(e.job).name
                 cur_filesize = e.current_filesize 
-                e.current_filesize = filesize(server, joinpath(e.remote_dir, e.job[cur_running].outfile))
+                e.current_filesize = Float64(filesize(server, joinpath(e.remote_dir, e.job[cur_running].outfile)))
                 if cur_running != e.current_running || e.current_filesize != cur_filesize
                     e.current_runtime = 0.0
                 else
@@ -528,7 +527,7 @@ function Overseer.update(::Cleaner, m::AbstractLedger)
             Threads.@spawn begin
                 s = Server(e.job.server)
                 jdir = e.remote_dir
-                if !RemoteHPC.islocal(s) && ispath(s, e.remote_dir)
+                if e.remote_dir != e.local_dir && ispath(s, e.remote_dir)
                     @debugv 2 "Cleaning $jdir on Server $(s.name)"
                     rm(s, jdir)
                 end

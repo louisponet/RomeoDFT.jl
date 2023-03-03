@@ -95,7 +95,7 @@ Base.joinpath(m::Searcher, p...) = joinpath(realpath(m.rootdir), p...)
 Base.joinpath(s::Server, m::Searcher, p...) = RemoteHPC.islocal(s) ? joinpath(m, p...) : abspath(s, joinpath("RomeoDFT", searcher_name(m), p...))
 Base.joinpath(s::Server, m::Searcher, e::AbstractEntity) = joinpath(s, m, "$(Entity(e).id)")
 
-local_dir(m::Searcher, e::AbstractEntity) = joinpath(m, "job_backups","$(Entity(e).id)")
+local_dir(m::Searcher, e::AbstractEntity) = joinpath(m, "job_backups", "$(Entity(e).id)")
 
 function simname(m)
     fdir = searcher_name(m)
@@ -623,7 +623,9 @@ function loop(l::Searcher; verbosity=0, sleep_time=l.sleep_time)
                         l.loop_error = true
                     end
                 end
-                while !l.stop &&  round(now() - curt, Second) < Second(l.sleep_time)
+                secs = round(Int, l.sleep_time)
+                ms = round(Int, (l.sleep_time - secs)*1000)
+                while !l.stop &&  round(now() - curt, Second) < Second(secs) + Millisecond(ms)
                     sleep(0.5)
                 end
                 @debugv 2 "[START] Saving" 
