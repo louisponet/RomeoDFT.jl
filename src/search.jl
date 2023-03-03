@@ -1,5 +1,6 @@
 using JLD2: jldopen
 using REPL.TerminalMenus
+using Overseer: AbstractEntity
 
 dft_energy(res) = res.total_energy - res.Hubbard_energy
 
@@ -88,16 +89,13 @@ function searcher_name(s::AbstractString)
         return s
     end
 end
-searcher_name(m::AbstractLedger) = searcher_name(m.rootdir)
+searcher_name(m::Searcher) = searcher_name(m.rootdir)
 
-function local_dir(m::AbstractLedger, e) 
-    return abspath(joinpath(m.rootdir, "job_backups","$(Entity(e).id)"))
-end
+Base.joinpath(m::Searcher, p...) = joinpath(realpath(m.rootdir), p...)
+Base.joinpath(s::Server, m::Searcher, p...) = RemoteHPC.islocal(s) ? joinpath(m, p...) : abspath(s, joinpath("RomeoDFT", searcher_name(m), p...))
+Base.joinpath(s::Server, m::Searcher, e::AbstractEntity) = joinpath(s, m, "$(Entity(e).id)")
 
-function remote_dir(m::AbstractLedger, e) 
-    fdir = searcher_name(m)
-    return joinpath("RomeoDFT", fdir, "$(Entity(e).id)")
-end
+local_dir(m::Searcher, e::AbstractEntity) = joinpath(m, "job_backups","$(Entity(e).id)")
 
 function simname(m)
     fdir = searcher_name(m)
@@ -168,7 +166,12 @@ function states(l)
     return out
 end
 
-function setup_scf(scf_file, supercell)
+function setup_scf(scf_file, supercell;
+                      Hubbard_maxstep = 100,
+                      Hubbard_mixing_beta = 0.4,
+                      Hubbard_strength = 1.0,
+                      Hubbard_conv_thr = 0.1,
+                      electron_maxstep = 500, kwargs...)
     @assert ispath(scf_file) ArgumentError("scf file not found")
 
     template = DFC.FileIO.qe_parse_calculation(scf_file)
@@ -193,7 +196,7 @@ function setup_scf(scf_file, supercell)
     return calc
 end
 
-function setup_structure(structure_file, primitive, supercell)
+function setup_structure(structure_file, supercell, primitive)
     @assert ispath(structure_file) ArgumentError("Structure file not found")
     
     str = splitext(structure_file)[end] == ".in" ?
@@ -227,8 +230,7 @@ function setup_structure(structure_file, primitive, supercell)
     choices = request("Select magnetic elements:", MultiSelectMenu(atsyms))
 
     for c in choices
-        U_str = ask_input("Set U for element $(atsyms[c]): ")
-        U = parse(Float64, U_str)
+        U = RemoteHPC.ask_input(Float64, "Set U for element $(atsyms[c])")
         for a in filter(x->x.name == Symbol(atsyms[c]), str.atoms)
             a.dftu.U = U
             a.magnetization = [0.0, 0.0, 1e-5]
@@ -241,7 +243,7 @@ function setup_structure(structure_file, primitive, supercell)
 end
 
 function setup_ServerInfo()
-    server_names = load(local_server, Server())
+    server_names = load(local_server(), Server())
     server_choice = request("Select Server to run on:", RadioMenu(server_names))
      
     s = Server(server_names[server_choice])
@@ -262,7 +264,7 @@ function setup_ServerInfo()
         envs = load(s, Environment())
     end
     multi_env = envs[request("Please multi node Environment", RadioMenu(envs))]
-    priority = parse(Int, ask_input("Please set priority [Int] (use 5 for default): "))
+    priority = RemoteHPC.ask_input(Int, "Please set priority", 5)
 
     return ServerInfo(s.name, pw_exec, multi_env, priority)
 end
@@ -274,13 +276,8 @@ function setup_search(name, scf_file, structure_file=scf_file;
                       α = 0.5,
                       β = 0.5,
                       sleep_time = 30,
-                      Hubbard_maxstep = 100,
-                      Hubbard_mixing_beta = 0.4,
-                      Hubbard_strength = 1.0,
-                      Hubbard_conv_thr = 0.1,
                       primitive = false,
                       supercell = [1,1,1],
-                      electron_maxstep = 500,
                       verbosity = 0,
                       unique_thr=1e-2,
                       mindist = 0.25,
@@ -303,7 +300,7 @@ function setup_search(name, scf_file, structure_file=scf_file;
         mkpath(dir)
     end
 
-    calc = setup_scf(scf_file, supercell)
+    calc = setup_scf(scf_file, supercell; kwargs...)
     str = setup_structure(structure_file, supercell, primitive) 
 
     l = Searcher(; rootdir = dir, sleep_time = sleep_time)

@@ -38,7 +38,6 @@ function Overseer.update(::JobCreator, m::AbstractLedger)
             tot_new += 1
             Threads.@spawn begin
                 simn = simname(m)
-                rem_dir = remote_dir(m, e)
                 loc_dir = local_dir(m, e)
                 if ispath(loc_dir)
                     rm(loc_dir; recursive = true)
@@ -74,7 +73,7 @@ function Overseer.update(::JobCreator, m::AbstractLedger)
                     delete!(j.calculations[1], :disk_io)
                 end
                 lock(sublock)
-                m[e] = SimJob(loc_dir, rem_dir, j)
+                m[e] = SimJob(loc_dir, "", j)
                 m[e] = Submit()
                 unlock(sublock)
             end
@@ -88,7 +87,6 @@ function Overseer.update(::JobCreator, m::AbstractLedger)
         end
         tot_new += 1
         Threads.@spawn begin
-            rem_dir = remote_dir(m, e)
             simn = simname(m)
             loc_dir = local_dir(m, e)
             tc = deepcopy(e.calculation)
@@ -155,7 +153,7 @@ function Overseer.update(::JobCreator, m::AbstractLedger)
             #making sure that the scf calculations are always named scf
 
             lock(sublock)
-            m[e] = SimJob(loc_dir, rem_dir, job)
+            m[e] = SimJob(loc_dir, "", job)
             m[e] = Submit()
             unlock(sublock)
         end
@@ -250,10 +248,10 @@ end
 Submits entities with [`SimJob`](@ref) and [`Submit`](@ref) components.
 """
 struct JobSubmitter <: System end
-function set_server_pseudos!(j::Job, server::Server, simn)
+function set_server_pseudos!(j::Job, s::Server, m::Searcher)
     for a in j.structure.atoms
-        a.pseudo.path = joinpath(abspath(server, joinpath("RomeoDFT", simn, "pseudos/$(a.element.symbol).UPF")))
-        a.pseudo.server = server.name
+        a.pseudo.path = joinpath(s, m, "pseudos/$(a.element.symbol).UPF")
+        a.pseudo.server = s.name
     end
 end
 
@@ -289,16 +287,16 @@ function Overseer.update(::JobSubmitter, m::AbstractLedger)
             str = m[Simulation][1].template_structure
             calc = m[Simulation][1].template_calculation
         end
-        pseudodir = joinpath("RomeoDFT", searcher_name(m), "pseudos")
         
         for s in [map(x -> x.server, m[ServerInfo].data); local_server().name]
             server = Server(s)
+            pseudodir = joinpath(server, m, "pseudos")
             if !isalive(server) || ispath(server, pseudodir)
                 continue
             end
-            mkpath(server, abspath(server, pseudodir))
+            mkpath(server, pseudodir)
             for a in str.atoms
-                ppath = abspath(server, joinpath(pseudodir, "$(a.element.symbol).UPF"))
+                ppath = joinpath(pseudodir, "$(a.element.symbol).UPF")
                 if !ispath(server, ppath)
                     pseudo = a.pseudo
                     pserver = Server(pseudo.server)
@@ -313,9 +311,12 @@ function Overseer.update(::JobSubmitter, m::AbstractLedger)
             end
         end
     end
+
+    # TODO: For now only 1 server
     server_info = sinfo[1]
     server_entity = entity(sinfo, 1)
     server = Server(server_info.server)
+    
     if !isalive(server)
         @debugv 2 "[STOP] JobSubmitter"
         return
@@ -352,11 +353,7 @@ function Overseer.update(::JobSubmitter, m::AbstractLedger)
             if !(state(server, jinfo[e].remote_dir) in (RemoteHPC.Running, RemoteHPC.Pending, RemoteHPC.Submitted))
                 try
                     # So we don't have to always do abspath(server, remote_dir)
-                    if !isabspath(jinfo[e].remote_dir)
-                        jinfo[e].remote_dir = abspath(server, jinfo[e].remote_dir)
-                    else
-                        jinfo[e].remote_dir = abspath(server, "RomeoDFT" * split(jinfo[e].remote_dir, "RomeoDFT")[2])
-                    end
+                    jinfo[e].remote_dir = joinpath(server, m, e)
 
                     for c in filter(x -> x.run, j.calculations)
                         if eltype(c) == QE
@@ -375,13 +372,13 @@ function Overseer.update(::JobSubmitter, m::AbstractLedger)
                     cid = findfirst(x -> occursin("wan", x.name) && x.run, j.calculations)
                     j.environment = server_info.environment
 
-                    set_server_pseudos!(j, local_server(), searcher_name(m))
+                    set_server_pseudos!(j, local_server(), m)
                     local_save(j, jinfo[e].local_dir)
                     j.dir = jinfo[e].remote_dir
                 
 
                     j.server = server_info.server
-                    set_server_pseudos!(j, server, searcher_name(m))
+                    set_server_pseudos!(j, server, m)
 
                     suppress() do
                         return submit(j; fillexecs = false, versioncheck=false, priority = e in m[NSCFSettings] || e in m[BaseCase] ? server_info.priority + 1 : server_info.priority)

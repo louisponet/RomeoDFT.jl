@@ -47,6 +47,7 @@ Searcher commands
 """
 module searcher
     using ..RomeoDFT: searchers_dir, searcher_name, orchestrator_eval, setup_search
+    using ..RomeoDFT.RemoteHPC: InteractiveUtils
     using Comonicon
     """
     load a searcher.
@@ -109,6 +110,17 @@ module searcher
     """
     @cast function list()
         return print(orchestrator_eval("list_searchers()"))
+    end
+    
+    """
+    opens the log of a searcher in your favorite editor.
+    
+    # Args
+
+    - `name`: the name or directory of the searcher.
+    """
+    @cast function log(name::String)
+        InteractiveUtils.edit(joinpath(searchers_dir(name), "log.log"))
     end
     
     """

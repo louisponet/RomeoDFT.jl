@@ -45,12 +45,12 @@ include("jobs.jl")
 
 include("database.jl")
 
+include("search.jl")
 include("Systems/core.jl")
 include("Systems/postprocessing.jl")
 include("Systems/firefly.jl")
 include("Systems/intersection.jl")
 include("Systems/structural.jl")
-include("search.jl")
 include("orchestrator.jl")
 include("client.jl")
 include("analysis.jl")
