@@ -25,8 +25,7 @@ jobs:
         os:
           - ubuntu-latest
         arch:
-          - x86
-          - x86_64
+          - x64
     steps:
       - uses: actions/checkout@v2
       - uses: julia-actions/setup-julia@v1
@@ -43,8 +42,6 @@ jobs:
   docs:
     name: Documentation
     runs-on: ubuntu-latest
-    env:
-      IN_CI: true
     permissions:
       contents: write
       statuses: write
