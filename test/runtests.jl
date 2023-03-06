@@ -144,6 +144,11 @@ for case in test_cases
             RomeoDFT.ProgressMeter.next!(p, showvalues=[("Processed:", length(l[Done]))])
             sleep(0.5)
         end
+
+        @test l.loop === nothing
+        if l.loop !== nothing
+            display(l.loop)
+        end
         
         @test isempty(l[Error])
 
