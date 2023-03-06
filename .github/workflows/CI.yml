@@ -1,4 +1,6 @@
 name: CI
+env:
+  CI: true
 on:
   push:
     branches:
@@ -14,8 +16,6 @@ jobs:
   test:
     name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
-    env:
-      IN_CI: true
     strategy:
       fail-fast: false
       matrix:
@@ -43,6 +43,8 @@ jobs:
   docs:
     name: Documentation
     runs-on: ubuntu-latest
+    env:
+      IN_CI: true
     permissions:
       contents: write
       statuses: write

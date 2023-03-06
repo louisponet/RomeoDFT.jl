@@ -25,7 +25,7 @@ using RemoteHPC
 if !RemoteHPC.exists(Environment("default"))
     save(Environment(name="default"))
 end
-if !haskey(ENV, "IN_CI")
+if !haskey(ENV, "CI")
     Pkg.activate(".")
     using RomeoDFT
     RomeoDFT.comonicon_install()
