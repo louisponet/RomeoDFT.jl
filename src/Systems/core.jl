@@ -472,7 +472,10 @@ function Overseer.update(::JobMonitor, m::AbstractLedger)
                             joinpath(e.remote_dir,
                                      Client.last_running_calculation(e.job).outfile)) == 0.0
                 if length(DFC.versions(e.job)) < 3
-                    lock_() do 
+                    lock_() do
+                        if !any(x->x.run, e.job.calculations)
+                            e.job.calculations[end].run = true
+                        end
                         m[e] = Submit()
                     end
                 else
@@ -624,7 +627,7 @@ function Overseer.update(::ErrorCorrector, m::AbstractLedger)
             e in m[Done] && pop!(m[Done], e)
             e in m[BandsResults] && pop!(m[BandsResults], e)
             if e in m[SimJob]
-                if e.niterations == e.constraining_steps
+                if e.niterations == e.constraining_steps != 0
                     @debugv 1 "ErrorCorrector: $(e.e) had converged scf while constraints still applied, increasing Hubbard_conv_thr."
                     pop!(m[ServerInfo], e)
                     pop!(m[TimingInfo], e)

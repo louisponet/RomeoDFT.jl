@@ -281,8 +281,16 @@ function setup_search(name, scf_file, structure_file=scf_file;
                       verbosity = 0,
                       unique_thr=1e-2,
                       mindist = 0.25,
-                      stopping_unique_ratio = 0.1,
-                      stopping_n_generations =3,
+                      stopping_unique_ratio  = 0.1,
+                      stopping_n_generations = 3,
+                      relax_unique=false,
+                      relax_base=false,
+                      force_convergence_threshold=1e-3,
+                      energy_convergence_threshold=1e-4,
+                      ion_dynamics="bfgs",
+                      cell_dynamics="bfgs",
+                      symmetry=true,
+                      variable_cell=true,
                       kwargs...)
                       
     dir = searchers_dir(name)
@@ -305,8 +313,16 @@ function setup_search(name, scf_file, structure_file=scf_file;
 
     l = Searcher(; rootdir = dir, sleep_time = sleep_time)
 
-    Entity(l, setup_ServerInfo())
-   
+    sim_entity = Entity(l, setup_ServerInfo(),RandomSearcher(nflies),
+                           Template(deepcopy(str), deepcopy(calc)),
+                           Unique(unique_thr, true),
+                           IntersectionSearcher(mindist, 100),
+                           StopCondition(stopping_unique_ratio, stopping_n_generations),
+                           Generation(1))
+    relset = RelaxSettings(force_convergence_threshold, energy_convergence_threshold, ion_dynamics, cell_dynamics, symmetry, variable_cell)
+    if relax_unique
+        l[sim_entity] = relset
+    end
 
     ishybrid = haskey(calc, :input_dft) || haskey(calc, :exxdiv_treatment)
     
@@ -315,17 +331,14 @@ function setup_search(name, scf_file, structure_file=scf_file;
                        Template(deepcopy(str),
                        deepcopy(calc)),
                        Generation(1))
+    if relax_base
+        l[base_e] = relset
+    end
                        
     if ishybrid
         l[base_e] = Hybrid()
     end
 
-    sim_entity = Entity(l, RandomSearcher(nflies),
-                           Template(deepcopy(str), deepcopy(calc)),
-                           Unique(unique_thr, true),
-                           IntersectionSearcher(mindist, 100),
-                           StopCondition(stopping_unique_ratio, stopping_n_generations),
-                           Generation(1))
                            
     if ishybrid
         l[sim_entity] = Hybrid()

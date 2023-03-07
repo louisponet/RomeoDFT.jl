@@ -21,10 +21,11 @@ if !haskey(ENV, "CI")
     Pkg.add(url="https://github.com/louisponet/RomeoDFT.jl")
     Pkg.update()
 
-
-    Pkg.activate(".")
-    using RomeoDFT
-    RomeoDFT.comonicon_install()
+    if !occursin("config/RomeoDFT", pwd())
+        Pkg.activate(".")
+        using RomeoDFT
+        RomeoDFT.comonicon_install()
+    end
 end
 using RemoteHPC
 if !RemoteHPC.exists(Environment("default"))

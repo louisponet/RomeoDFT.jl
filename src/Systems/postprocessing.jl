@@ -166,28 +166,17 @@ Overseer.requested_components(::UniqueExplorer) = (Archived,Intersection, NSCFSe
 
 function Overseer.update(::UniqueExplorer, m::AbstractLedger)
     @debugv 2 "[START] UniqueExplorer"
-    results = m[Results]
-    generation = m[Generation]
-    simulation = m[Simulation]
-    nsettings = m[NSCFSettings]
-    curgen = maximum(x->x.generation, m[Generation], init=0)
     new_states = 0
+    # First unique entity holds all the settings that are associated
+    # with all the states found to be unique, i.e. relaxing projwfc etc
+    unique_e = entity(m[Unique], 1)
     for e in @entities_in(m, Results && SimJob && Unique)
         postprocess = false
-        if !isempty(m[BandsSettings])
-            band_e = entity(m[BandsSettings], length(m[BandsSettings]))
-            m[BandsSettings][e] = band_e
-            postprocess = true
-        end
-        if !isempty(m[NSCFSettings])
-            nscf_e = entity(m[NSCFSettings], length(m[NSCFSettings]))
-            m[NSCFSettings][e] = nscf_e
-            postprocess = true
-        end
-        if !isempty(m[ProjwfcSettings])
-            projwfc_e = entity(m[ProjwfcSettings], length(m[ProjwfcSettings]))
-            m[ProjwfcSettings][e] = projwfc_e
-            postprocess = true
+        for ct in (BandsSettings, NSCFSettings, ProjwfcSettings) 
+            if unique_e in m[ct]
+                m[ct][e] = unique_e
+                postprocess = true
+            end
         end
         if !postprocess
             m[e] = Done(false)

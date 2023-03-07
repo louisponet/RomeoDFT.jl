@@ -3,17 +3,18 @@ struct Relaxor <: System end
 Overseer.requested_components(::Relaxor) = (Template, RelaxSettings, RelaxResults, Parent, RelaxChild)
 
 function Overseer.update(::Relaxor, m::AbstractLedger)
-    if isempty(m[RelaxSettings])
-        return
-    end
 
-    relset = entity(m[RelaxSettings], 1)
-   
-    for e in @entities_in(m, Unique && Results && !RelaxChild)
-        enew = Entity(m, Parent(e.e), m[Generation][e], Trial(e.state, PostProcess))
-        m[Template][enew] = e
-        m[RelaxSettings][enew] = relset
-        m[e] = RelaxChild(enew)
+    # If the Unique entity holds a relaxsettings then each
+    # unique state should be relaxed
+    unique_e = entity(m[Unique], 1)
+    if unique_e in m[RelaxSettings]
+        relset = m[RelaxSettings][unique_e]
+        for e in @entities_in(m, Unique && Results && !RelaxChild)
+            enew = Entity(m, Parent(e.e), m[Generation][e], Trial(e.state, PostProcess))
+            m[Template][enew] = e
+            m[RelaxSettings][enew] = relset
+            m[e] = RelaxChild(enew)
+        end
     end
 end
 
@@ -56,6 +57,15 @@ function Overseer.update(::RelaxProcessor, m::AbstractLedger)
                                     m[RelaxResults][e] = relres
                                     m[Done][e] = Done(false)
                                 end
+                                
+                                # This is in case the entity was the basecase -> overwrite template structure of the search
+                                if e.e == Entity(2)
+                                    search_e = entity(m[Unique], 1)
+                                    newstr = Structures.update_geometry!(m[Template][search_e].structure,
+                                                                         m[RelaxResults][e].final_structure)
+                                    m[Template][search_e] = Template(newstr, m[Template][search_e].calculation)
+                                end
+                                    
 
                                 if haskey(res, :bands) && haskey(res, :total_magnetization)
                                     bands = flatbands(res)

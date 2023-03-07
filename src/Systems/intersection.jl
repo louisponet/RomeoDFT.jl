@@ -207,7 +207,8 @@ function Overseer.update(::RandomTrialGenerator, m::AbstractLedger)
     
     base_state = m[Results][entity(m[BaseCase],1)].state
     if isempty(base_state.occupations)
-        error("Something went wrong with the basecase calculation")
+        @error "Something went wrong with the basecase calculation"
+        return
     end
     rand_search_comp = m[RandomSearcher]
     rand_search_e = entity(rand_search_comp, 1)

@@ -1,7 +1,7 @@
 [Ni2O2]
-git-tree-sha1 = "fc1ddf2237ffeca1636e866e523a796302ac6200"
+git-tree-sha1 = "81a79bd1fc579ecc6d6c34d5813420d237308153"
 lazy = true
 
     [[Ni2O2.download]]
-    sha256 = "bef7ba2ce444925ad460a232348efb496fe8c711238fc98942da135c438c997f"
+    sha256 = "c56f648fb0b487b7b16bd5b1f2bed1e9cd90367711ca850d466e7859dc1ea821"
     url = "https://github.com/louisponet/RomeoDFT.jl/raw/main/artifacts/Ni2O2.tar.gz"
