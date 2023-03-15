@@ -1,19 +1,38 @@
 struct Relaxor <: System end
 
-Overseer.requested_components(::Relaxor) = (Template, RelaxSettings, RelaxResults, Parent, RelaxChild)
+Overseer.requested_components(::Relaxor) = (RelaxSettings, RelaxResults) 
 
 function Overseer.update(::Relaxor, m::AbstractLedger)
-
-    # If the Unique entity holds a relaxsettings then each
-    # unique state should be relaxed
-    unique_e = entity(m[Unique], 1)
-    if unique_e in m[RelaxSettings]
-        relset = m[RelaxSettings][unique_e]
-        for e in @entities_in(m, Unique && Results && !RelaxChild)
-            enew = Entity(m, Parent(e.e), m[Generation][e], Trial(e.state, PostProcess))
-            m[Template][enew] = e
-            m[RelaxSettings][enew] = relset
-            m[e] = RelaxChild(enew)
+    if isempty(m[RelaxSettings])
+        return
+    end
+    
+    @error_capturing for e in @safe_entities_in(m, SimJob && RelaxSettings)
+        # We assume that a job has been created with an SCF calculation instead of a vcrelax,
+        # so we highjack that one
+        cname = e.variable_cell ? "vcrelax" : "relax"
+        if any(x -> x.name == cname, e.job.calculations)
+            continue
+        end
+        tc = e.job.calculations[end]
+        suppress() do
+            tc[:forc_conv_thr] = e.force_convergence_threshold
+            tc[:etot_conv_thr] = e.energy_convergence_threshold
+            tc[:ion_dynamics]  = e.ion_dynamics 
+            tc[:cell_dynamics] = e.cell_dynamics
+            if !e.symmetry
+                tc[:nosym] = true
+            end
+            if ispath(joinpath(local_dir(m, e), "$(tc.name).out"))
+                rm(joinpath(local_dir(m, e), "$(tc.name).out"))
+            end
+            if e.variable_cell 
+                set_name!(tc, "vcrelax")
+                tc[:calculation] = "vc-relax"
+            else
+                set_name!(tc, "relax")
+                tc[:calculation] = "relax"
+            end
         end
     end
 end
@@ -23,94 +42,107 @@ struct RelaxProcessor <: System end
 Overseer.requested_components(::RelaxProcessor) = (Template, RelaxSettings, RelaxResults, Parent, RelaxChild)
 
 function Overseer.update(::RelaxProcessor, m::AbstractLedger)
-    if isempty(m[RelaxSettings])
-        return
-    end
-    lck = ReentrantLock()
-    function lock_(f)
-        lock(lck)
-        try
-            f()
-        finally
-            unlock(lck)
-        end
-    end
-    to_pop = Entity[]
-    @sync for e in @entities_in(m, SimJob && TimingInfo && RelaxSettings && !RelaxResults)
+    @error_capturing for e in @safe_entities_in(m, Pulled && SimJob && RelaxSettings)
         cname = e.variable_cell ? "vcrelax" : "relax"
-        if ispath(joinpath(e.local_dir, "$cname.out"))
-            # Threads.@spawn begin
-                curt = now()
-                try
-                    j = local_load(Job(e.local_dir))
-                    o = hubbard_outputdata(j; calcs = [cname])
-                    if !isempty(o)
-                        e.job[cname].run = false
-                        res = o[cname]
-                        results = results_from_output(res)
-                        if haskey(res, :total_force)
-                            if res[:converged]
-                                relres = RelaxResults(res[:n_scf], res[:total_force][end], res[:final_structure])
-                                
-                                lock_() do
-                                    m[Results][e] = results
-                                    m[RelaxResults][e] = relres
-                                    m[Done][e] = Done(false)
-                                end
-                                
-                                # This is in case the entity was the basecase -> overwrite template structure of the search
-                                if e.e == Entity(2)
-                                    search_e = entity(m[Unique], 1)
-                                    newstr = Structures.update_geometry!(m[Template][search_e].structure,
-                                                                         m[RelaxResults][e].final_structure)
-                                    m[Template][search_e] = Template(newstr, m[Template][search_e].calculation)
-                                end
-                                    
-
-                                if haskey(res, :bands) && haskey(res, :total_magnetization)
-                                    bands = flatbands(res)
-                                    lock_() do
-                                        m[FlatBands][e] = FlatBands(bands)
-                                    end
-                                end
-                            else
-                                str = res[:final_structure]
-                                if any(isnan, str.cell)
-                                    m[RelaxSettings].data[1].symmetry = false
-                                    lock_() do
-                                        push!(to_pop, e.e)
-                                    end
-                                else
-                                    orig_str = deepcopy(m[Template][e].structure)
-                                    Structures.update_geometry!(orig_str, str)
-                                    @debug "Updating structure of $(e.e) and rerunning" 
-                                    lock_() do
-                                        m[Template][e] = Template(orig_str, m[Template][e].calculation)
-                                        push!(to_pop, e.e)
-                                    end
-                                end
-                            end
-                        else
-                            relres = RelaxResults(0, Inf, e.job.structure)
-                            lock_() do
-                                m[Results][e] = results
-                                m[RelaxResults][e] = relres
-                                m[Done][e] = Done(false)
-                            end
-                        end
+        if !ispath(joinpath(e.local_dir, "$cname.out"))
+            continue
+        end
+        curt = now()
+        j = local_load(Job(e.local_dir))
+        o = hubbard_outputdata(j; calcs = [cname])
+        if !isempty(o)
+            e.job[cname].run = false
+            res = o[cname]
+            results = results_from_output(res, e in m[BaseCase])
+            m[e] = results
+            if e in m[Trial] && !isempty(results.state.occupations)
+                m[e] = Trial(results.state, PostProcess)
+            end
+            
+            if haskey(res, :bands) && haskey(res, :total_magnetization)
+                bands = flatbands(res)
+                m[e] = FlatBands(bands)
+            end
+                
+            if haskey(res, :total_force) && haskey(res, :final_structure)
+                str = res[:final_structure]
+                
+                if any(isnan, str.cell)
+                    # We copy here otherwise we overwrite all relaxsettings
+                    t = deepcopy(m[RelaxSettings][e])
+                    t.symmetry = false
+                    m[e] = t
+                    log(e, "Found NaNs in final structure, rerunning with no symmetry")
+                    diff = typemax(Float64)
+                else
+                    # Relatively arbitrary check for convergence
+                    orig_str = m[Template][e].structure
+                    diff = abs(Structures.ustrip(Structures.volume(orig_str)) - Structures.ustrip(Structures.volume(str)))
+                    
+                    for (a1, a2) in zip(orig_str.atoms, str.atoms)
+                        diff += Structures.ustrip(norm(a1.position_cart .- a2.position_cart))
                     end
-                catch err
-                    lock_() do 
-                        @debug "Error for $(e.e) $(stacktrace(catch_backtrace()))" 
-                        m[e] = Error(err, stacktrace(catch_backtrace()))
+                    log(e, "Diff of relaxed structure with original: $diff") 
+                    
+                    # Update structure 
+                    Structures.update_geometry!(m[Template][e].structure, str)
+                    if e.e == entity(m[BaseCase], 1)
+                        search_e = entity(m[Unique], 1)
+                        Structures.update_geometry!(m[Template][search_e].structure,
+                                                             res[:final_structure])
                     end
                 end
-                e.postprocessing += Dates.datetime2unix(now()) - Dates.datetime2unix(curt)
-            # end
+
+                relres = RelaxResults(res[:n_scf], res[:total_force][end], str)
+                m[e] = relres
+                
+                if diff > e.force_convergence_threshold && (!res[:converged] || !res[:finished])
+                    should_rerun(m, e, SimJob)
+                    continue
+                elseif res[:converged] && !res[:finished]
+                    tc = deepcopy(e.job[cname])
+                    suppress() do
+                        tc[:calculation] = "scf"
+                        Calculations.set_name!(tc, "scf")
+                    end
+                    cid = findfirst(x->x.name == cname, e.job.calculations)
+                    insert!(e.job, cid + 1, tc)
+                    for i = cid+2:length(e.job.calculations)
+                        e.job.calculations[i].run = true
+                    end
+                    should_rerun(m, e) 
+                end
+                
+                if e.job.calculations[end].name == cname
+                    m[e] = Done(false)
+                end
+            else
+                if res[:finished] && !res[:converged]
+                    calc = m[Template][e].calculation
+                    if calc[:electron_maxstep] < 1000
+                        suppress() do 
+                            calc[:electron_maxstep] *= 2
+                        end
+                        log(e, "vcrelax did not converge, increased electron maxstep to $(calc[:electron_maxstep])")
+                        should_rerun(m, e, SimJob)
+                    elseif calc[:mixing_beta] > 0.01
+                        suppress() do
+                            calc[:mixing_beta] *= 0.5
+                        end
+                        log(e, "vcrelax did not converge, lowered mixing beta to $(calc[:mixing_beta])")
+                        should_rerun(m, e, SimJob)
+                    elseif e in m[Rerun]
+                        if e.job.calculations[end].name == cname
+                            m[e] = Done(false)
+                        end
+                    else
+                        m[e] = Error(e, "Something went wrong with vcrelax calculation")
+                    end
+                else
+                    m[e] = Error(e, "Something went wrong with vcrelax calculation")
+                end
+            end
         end
-    end
-    for e in to_pop
-        pop!(m[SimJob], e)
-        pop!(m[TimingInfo], e)
+        m[TimingInfo][e].postprocessing += Dates.datetime2unix(now()) - Dates.datetime2unix(curt)
     end
 end

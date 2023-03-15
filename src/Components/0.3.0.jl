@@ -52,7 +52,6 @@ A flat representation of a bandstructure to be used with [`sssp_distance`](@ref)
     bands::Vector{Float64}
 end
 
-Base.show(io::IO, f::FlatBands) = print(io, "FlatBands(nkpt: $(length(f.bands)))")
 
 @component struct Bin
     entities::Vector{Entity}

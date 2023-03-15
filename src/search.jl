@@ -1,84 +1,42 @@
-using JLD2: jldopen
-using REPL.TerminalMenus
-using Overseer: AbstractEntity
+"""
+    Searcher
 
-dft_energy(res) = res.total_energy - res.Hubbard_energy
-
-function core_stage()
-    return Stage(:core, [JobCreator(), [JobSubmitter(),Cleaner()], [JobMonitor(), OutputPuller()], ResultsProcessor(), RelaxProcessor(), ErrorCorrector(), UniqueExplorer(), Relaxor(), Stopper()])
-end
-
-function cleanup_stage()
-    return Stage(:cleanup, [JobCreator(), JobMonitor(), OutputPuller(), ResultsProcessor(), RelaxProcessor(), UniqueExplorer(), Cleaner(), Stopper()])
-end
-
-function intersection_stage()
-    return Stage(:intersection, [Intersector(), RandomTrialGenerator()])
-end
-function firefly_stage()
-    return Stage(:firefly, [FireFly(), PostFireflyExplorer(), Archiver()])
-
-end
-
-function search_stages()
-    return [Stage(:main, [intersection_stage(), core_stage()])]
-end
-
+Holds all the data that is gathered during a search, and the information related to the search execution. 
+"""
 Base.@kwdef mutable struct Searcher <: AbstractLedger
-    rootdir::String
-    loop::Union{Nothing,Task} = nothing
-    stop::Bool = false
-    finished::Bool = false
-    sleep_time::Float64 = 30
-    loop_error::Bool = false
-    mode::Symbol = :postprocess # What is the searcher doing i.e. searching or merely postprocessing
-    ledger::Ledger = Ledger((mode == :postprocess ? [core_stage()] : search_stages())...)
+    rootdir    ::String
+    loop       ::Union{Nothing,Task}           = nothing
+    stop       ::Bool                          = false
+    finished   ::Bool                          = false
+    sleep_time ::Float64                       = 30
+    loop_error ::Bool                          = false
+    mode       ::Symbol                        = :postprocess # What is the searcher doing i.e. searching or merely postprocessing
+    ledger     ::Ledger                        = Ledger((mode == :postprocess ? [core_stage()] : search_stages())...)
+    locks      ::Dict{DataType, ReentrantLock} = Dict{DataType, ReentrantLock}()
+    timer      ::TimerOutput                   = TimerOutput()
+    verbosity  ::Int                           = 0
 end
 
 function Searcher(dir::AbstractString; kwargs...)
     dir = isdir(dir) ? dir : searchers_dir(dir)
     Searcher(; rootdir = abspath(dir), kwargs...)
 end
-Overseer.ledger(l::Searcher) = l.ledger
 
-function set_searcher_stages!(l::AbstractLedger, s::Symbol)
-    if s == :postprocess
-        l.stages = [core_stage()]
-    elseif s == :search
-        l.stages = search_stages()
-    elseif s == :cleanup
-        l.stages = [cleanup_stage()]
-    else
-        error("Searcher stage $s not recognized...")
-    end
-    prepare(l)
-end
-
-set_searcher_stages!(l::Searcher) = set_searcher_stages!(l.ledger, l.mode)
-
-function set_mode!(l::Searcher, mode::Symbol)
-    set_searcher_stages!(l.ledger, mode)
-    l.mode = mode
-    return l
-end
-
-storage_dir(l::Searcher) = joinpath(l.rootdir, string(DATABASE_VERSION))
-function RemoteHPC.load(l::Searcher;
-                                 version = nothing)
-    if version === nothing
-        versions = []
-        for d in readdir(l.rootdir)
-            if isdir(joinpath(l.rootdir, d)) 
-                try
-                    push!(versions, VersionNumber(d))
-                catch
-                    nothing
-                end
-            end
+function Base.show(io::IO, l::Searcher)
+    println(io, "Searcher:")
+    println(io, "rootdir: $(l.rootdir)")
+    if Simulation ∈ l
+        count = 1
+        for (s, es) in pools(l[Simulation])
+            println(io, "current_best: ", s.current_best)
+            println(io, "current_generation: ", s.current_generation)
+            count += 1
         end
-        version = maximum(versions)
     end
-    return load(joinpath(l.rootdir, string(version)), l)
+    println(io, "unique states: $(length(l[SCFSettings]))")
+
+    show(io, l.ledger)
+    return 
 end
 
 function searcher_name(s::AbstractString)
@@ -91,8 +49,8 @@ function searcher_name(s::AbstractString)
 end
 searcher_name(m::Searcher) = searcher_name(m.rootdir)
 
-Base.joinpath(m::Searcher, p...) = joinpath(realpath(m.rootdir), p...)
-Base.joinpath(s::Server, m::Searcher, p...) = RemoteHPC.islocal(s) ? joinpath(m, p...) : abspath(s, joinpath("RomeoDFT", searcher_name(m), p...))
+Base.joinpath(m::Searcher, p...)                         = joinpath(realpath(m.rootdir), p...)
+Base.joinpath(s::Server, m::Searcher, p...)              = RemoteHPC.islocal(s) ? joinpath(m, p...) : abspath(s, joinpath("RomeoDFT", searcher_name(m), p...))
 Base.joinpath(s::Server, m::Searcher, e::AbstractEntity) = joinpath(s, m, "$(Entity(e).id)")
 
 local_dir(m::Searcher, e::AbstractEntity) = joinpath(m, "job_backups", "$(Entity(e).id)")
@@ -102,8 +60,154 @@ function simname(m)
     return replace(fdir, "/" => "_")
 end
 
+##### OVERSEER Functionality
+Overseer.ledger(l::Searcher) = l.ledger
+
+function Base.getindex(l::Searcher, ::Type{T}) where {T}
+    lck = get!(l.locks, T, ReentrantLock())
+    SafeLoggingComponent(l.ledger[T], l.ledger[Log], lck)
+end
+
+function Overseer.Entity(l::Searcher, args...)
+    return Entity(l.ledger, Log(), args...)
+end
+
+function Overseer.update(l::Searcher)
+    for s in l.ledger.stages
+        update(s, l)
+    end
+    l.timer = TimerOutputs.flatten(l.timer)
+    return nothing
+end
+
+function Overseer.update(stage::Stage, l::Searcher)
+    # Steps in a stage get executed in sequence, but if
+    # a step is a vector they are threaded
+    for step in stage.steps
+        if step isa Vector
+            Threads.@threads for t in step
+                if t isa System
+                    to = TimerOutput()
+                    @timeit to "$(typeof(t))" update(t, l)
+                    merge!(l.timer, to)
+                else
+                    update(t, l)
+                end
+            end
+        else
+            if step isa System
+                to = TimerOutput()
+                @timeit to "$(typeof(step))" update(step, l)
+                merge!(l.timer, to)
+            else
+                update(step, l)
+            end
+        end
+    end
+end
+
+####### RemoteHPC
+storage_dir(l::Searcher) = joinpath(l.rootdir, string(DATABASE_VERSION))
+
 function RemoteHPC.save(l::Searcher)
     return (mkpath(storage_dir(l)); save(storage_dir(l), l))
+end
+
+function RemoteHPC.save(rootdir::String, l::AbstractLedger)
+    lp = joinpath(rootdir, "ledger.jld2")
+    if ispath(lp)
+        cp(lp, joinpath(rootdir, "ledger_bak.jld2"); force = true)
+    end
+    return JLD2.jldsave(joinpath(rootdir, "ledger.jld2");
+                        ledger     = Overseer.ledger(l),
+                        version    = DATABASE_VERSION,
+                        sleep_time = l.sleep_time,
+                        finished   = l.finished,
+                        mode       = l.mode,
+                        verbosity = l.verbosity)
+end
+
+function RemoteHPC.load(l::Searcher; version = nothing)
+    if version === nothing
+        versions = []
+        for d in readdir(l.rootdir)
+            if isdir(joinpath(l.rootdir, d)) && "ledger.jld2" in readdir(joinpath(l.rootdir, d))
+                try
+                    push!(versions, VersionNumber(d))
+                catch
+                    nothing
+                end
+            end
+        end
+        version = maximum(versions)
+    end
+    return load(joinpath(l.rootdir, string(version)), l)
+end
+
+function RemoteHPC.load(rootdir::String, l::AbstractLedger)
+    ledger_version = JLD2.jldopen(joinpath(rootdir, "ledger.jld2"), "r") do f
+        if haskey(f, "version")
+            return f["version"]
+        else
+            return VersionNumber(0, 1)
+        end
+    end
+
+    @assert ledger_version in versions() "Unknown version: $ledger_version"
+
+    alltypes = DataType[]
+    for (k, mods) in TYPE_MODS
+        for m in mods
+            push!(alltypes, getfield(m, k))
+        end
+    end
+    typemap = Dict([replace(string(t), "RomeoDFT" => "Occupations") => t for t in alltypes])
+    for t in keys(TYPE_MODS)
+        typemap["Occupations." * string(t)] = getfield(RomeoDFT, t)
+    end
+    typemap["Occupations.TrialOrigin"] = RomeoDFT.TrialOrigin
+    typemap["Occupations.MixingMode"] = RomeoDFT.MixingMode
+    for sys in filter(x -> isdefined(RomeoDFT, x) && getfield(RomeoDFT, x) isa DataType && getfield(RomeoDFT, x) <: System, names(RomeoDFT, all=true))
+        typemap["Occupations."*string(sys)] = getfield(RomeoDFT, sys)
+    end
+    
+    ledger = JLD2.jldopen(joinpath(rootdir, "ledger.jld2"), "r", typemap=typemap) do f
+        l.sleep_time = get(f, "sleep_time", l.sleep_time)
+        l.mode = get(f, "mode", l.mode)
+        l.mode = get(f, "searcher_stage", l.mode)
+        l.finished = get(f, "finished", l.finished)
+        l.verbosity = get(f, "verbosity", l.verbosity)
+        return f["ledger"]
+    end
+    for c in keys(components(l))
+        Overseer.ensure_component!(ledger, c)
+    end
+    if l.mode == :searching
+        l.mode = :search
+    end
+    set_searcher_stages!(ledger, l.mode)
+
+    for (t, mods) in TYPE_MODS
+        # do sequential update
+        for i in 1:length(mods)-1
+            old_t = getfield(mods[i], t)
+            new_t = getfield(mods[i+1], t)
+            if old_t != new_t && old_t ∈ ledger
+                Overseer.ensure_component!(ledger, new_t)
+                newcomp = ledger[new_t]
+                for e in @entities_in(ledger, old_t)
+                    newcomp[e] = version_convert(e[old_t], (t, mods[2:end]), 1)
+                end
+                delete!(components(ledger), old_t)
+                if newcomp isa PooledComponent
+                    Overseer.make_unique!(newcomp)
+                end
+            end
+        end
+    end
+    Overseer.ensure_component!(ledger, Log)
+    l.ledger = ledger
+    return l
 end
 
 load_archived(l::Searcher) = load_archived!(load(l))
@@ -124,46 +228,26 @@ function load_archived!(l::Searcher)
     end
     return l
 end
-function Base.show(io::IO, l::Searcher)
-    println(io, "Searcher:")
-    println(io, "rootdir: $(l.rootdir)")
-    if Simulation ∈ l
-        count = 1
-        for (s, es) in pools(l[Simulation])
-            println(io, "current_best: ", s.current_best)
-            println(io, "current_generation: ", s.current_generation)
-            count += 1
-        end
-    end
-    println(io, "unique states: $(length(l[SCFSettings]))")
 
-    show(io, l.ledger)
-    return 
+function set_searcher_stages!(l::AbstractLedger, s::Symbol)
+    if s == :postprocess
+        l.stages = [core_stage()]
+    elseif s == :search
+        l.stages = search_stages()
+    elseif s == :cleanup
+        l.stages = [cleanup_stage()]
+    else
+        error("Searcher stage $s not recognized...")
+    end
+    prepare(l)
 end
 
-function energies(l)
-    out = [zeros(i.n_fireflies, i.current_generation) for i in l[Simulation].data]
-    for e in @entities_in(l, Generation && Simulation && Results)
-        pid = Overseer.pool(l[Simulation], e)
-        gen = e.generation
-        o = out[pid]
-        o[findfirst(i -> iszero(o[i, gen]), 1:size(o, 1)), gen] = dft_energy(e)
-    end
-    return out
-end
+set_searcher_stages!(l::Searcher) = set_searcher_stages!(l.ledger, l.mode)
 
-function states(l)
-    out = []
-    for r in @entities_in(l[Results])
-        if !r.converged
-            continue
-        end
-        if !any(x -> sum(abs.(x.state.magmoms .- r.state.magmoms)) < 1e-2 ||
-                    Euclidean()(x.state, r.state) < 1e-2, out)
-            push!(out, r)
-        end
-    end
-    return out
+function set_mode!(l::Searcher, mode::Symbol)
+    set_searcher_stages!(l.ledger, mode)
+    l.mode = mode
+    return l
 end
 
 function setup_scf(scf_file, supercell;
@@ -229,11 +313,14 @@ function setup_structure(structure_file, supercell, primitive)
     atsyms = unique(map(x -> string(x.name), str.atoms))
     choices = request("Select magnetic elements:", MultiSelectMenu(atsyms))
 
+    mag = (1e-5, -1e-5)
+    magcount = 1
     for c in choices
         U = RemoteHPC.ask_input(Float64, "Set U for element $(atsyms[c])")
         for a in filter(x->x.name == Symbol(atsyms[c]), str.atoms)
             a.dftu.U = U
-            a.magnetization = [0.0, 0.0, 1e-5]
+            a.magnetization = [0.0, 0.0, mag[mod1(magcount, 2)]]
+            magcount += 1
         end
     end
 
@@ -278,7 +365,6 @@ function setup_search(name, scf_file, structure_file=scf_file;
                       sleep_time = 30,
                       primitive = false,
                       supercell = [1,1,1],
-                      verbosity = 0,
                       unique_thr=1e-2,
                       mindist = 0.25,
                       stopping_unique_ratio  = 0.1,
@@ -291,6 +377,14 @@ function setup_search(name, scf_file, structure_file=scf_file;
                       cell_dynamics="bfgs",
                       symmetry=true,
                       variable_cell=true,
+                      
+                      hp_base = false,
+                      hp_unique = false,
+                      hp_nq = (2,2,2),
+                      hp_conv_thr_chi = 1e-4,
+                      hp_find_atpert = 2,
+                      hp_U_conv_thr = 0.1,
+                      
                       kwargs...)
                       
     dir = searchers_dir(name)
@@ -303,6 +397,8 @@ function setup_search(name, scf_file, structure_file=scf_file;
             l = load(Searcher(dir))
             l.sleep_time = sleep_time
             return l
+        else
+            rm(dir, recursive=true)
         end
     else
         mkpath(dir)
@@ -313,80 +409,44 @@ function setup_search(name, scf_file, structure_file=scf_file;
 
     l = Searcher(; rootdir = dir, sleep_time = sleep_time)
 
-    sim_entity = Entity(l, setup_ServerInfo(),RandomSearcher(nflies),
+    sim_e = Entity(l, setup_ServerInfo(),RandomSearcher(nflies),
                            Template(deepcopy(str), deepcopy(calc)),
                            Unique(unique_thr, true),
                            IntersectionSearcher(mindist, 100),
                            StopCondition(stopping_unique_ratio, stopping_n_generations),
                            Generation(1))
-    relset = RelaxSettings(force_convergence_threshold, energy_convergence_threshold, ion_dynamics, cell_dynamics, symmetry, variable_cell)
-    if relax_unique
-        l[sim_entity] = relset
-    end
-
-    ishybrid = haskey(calc, :input_dft) || haskey(calc, :exxdiv_treatment)
-    
     # BaseCase simulation entity
     base_e = Entity(l, BaseCase(),
                        Template(deepcopy(str),
                        deepcopy(calc)),
                        Generation(1))
+                       
+    relset = RelaxSettings(force_convergence_threshold, energy_convergence_threshold, ion_dynamics, cell_dynamics, symmetry, variable_cell)
+    if relax_unique
+        l[sim_e] = relset
+    end
     if relax_base
         l[base_e] = relset
     end
-                       
+
+    hpset = HPSettings(hp_nq, hp_conv_thr_chi, hp_find_atpert, hp_U_conv_thr)
+    if hp_unique
+        l[sim_e] = hpset
+    end
+    if hp_base
+        l[base_e] = hpset
+    end
+    
+    ishybrid = haskey(calc, :input_dft) || haskey(calc, :exxdiv_treatment)
+    
     if ishybrid
         l[base_e] = Hybrid()
-    end
-
-                           
-    if ishybrid
-        l[sim_entity] = Hybrid()
+        l[sim_e] = Hybrid()
     end
 
     set_mode!(l, :search)
     save(l)
-    return orchestrator_eval("start_searcher(\"$(l.rootdir)\"; verbosity=$(verbosity), sleep_time=Int($(l.sleep_time)))")
-end
-
-function ground_state(l; by = x -> x.total_energy)
-    min_entity = Entity(0)
-    min_energy = typemax(Float64)
-    for e in @entities_in(l, Results && FlatBands)
-        if e.converged
-            test = by(e)
-            if test < min_energy
-                min_energy = test
-                min_entity = e.e
-            end
-        end
-    end
-    return l[min_entity]
-end
-
-function unique_states(es; thr = 1e-4, bands = true)
-    iu = ones(length(es))
-    @inbounds for i in 1:length(es)-1
-        e1 = es[i]
-        if iu[i] == 1
-            Threads.@threads for j in i+1:length(es)
-                if iu[j] == 1
-                    e2 = es[j]
-                    dist = bands ? sssp_distance(e1.bands, e2.bands, e1.fermi) :
-                           Euclidean()(e1.state, e2.state)
-                    if dist < thr
-                        iu[j] = 0
-                    end
-                end
-            end
-        end
-    end
-    return es[findall(isequal(1), iu)]
-end
-
-function unique_states(l::AbstractLedger; kwargs...)
-    return unique_states(filter(x -> x.converged,
-                                  @entities_in(l[Results] && l[FlatBands])); kwargs...)
+    return l
 end
 
 function final_report(l::Searcher)
@@ -480,7 +540,7 @@ function status(io::IO, l::Searcher)
     end
     println(io, "Status:        $status")
     println(io, "Unique states: $(length(l[Unique]))")
-    println(io, "Total Trials:  $(length(@entities_in(l, Results)))")
+    println(io, "Total Trials:  $(length(@entities_in(l, Results && !Parent)))")
     
     println(io)
     write_groundstate(io, l)
@@ -544,7 +604,7 @@ function status(io::IO, l::Searcher)
         println(io)
     end
     c = 0
-    for e in @entities_in(l, SimJob && NSCFSettings)
+    for e in @entities_in(l, SimJob && (Parent || NSCFSettings || BandsSettings || ProjwfcSettings))
         c += 1
     end
     if c != 0
@@ -552,7 +612,7 @@ function status(io::IO, l::Searcher)
         println(io)
     end
     c = 0
-    for e in @entities_in(l, Unique && Results && Done)
+    for e in @entities_in(l, Done && (Parent || NSCFSettings || BandsSettings || ProjwfcSettings))
         c += 1
     end
     if c != 0
@@ -563,6 +623,57 @@ function status(io::IO, l::Searcher)
     println(io, l.loop)
    
 end
+
+function add_search_entity!(m::AbstractLedger, search_e::Overseer.AbstractEntity, components...)
+    e = Entity(m)
+    for c in components
+        comp = m[typeof(c)]
+        if comp isa PooledComponent 
+            comp[e] = search_e
+        else
+            comp[e] = c
+        end
+    end
+    m[Template][e] = search_e
+    return e
+end
+
+function set_state!(m, e, s::T) where {T}
+    if e ∉ m[T]
+        for t in (Submit, Submitted, Running, Completed, Pulled)
+            trypop!(m[t], e)
+        end
+        m[e] = s
+    end
+end
+
+function set_state!(m, e, s::RemoteHPC.JobState)
+    c = nothing
+    if s == RemoteHPC.Submitted 
+        c = Submitted()
+    elseif s == RemoteHPC.Completed
+        c = Completed()
+    elseif s == RemoteHPC.Running
+        c = Running()
+    elseif s == RemoteHPC.Pending
+        c = Running()
+    end
+    if c !== nothing
+        set_state!(m, e, c)
+    end
+end
+
+function should_rerun(m, e, datatypes...)
+    rer = m[ShouldRerun]
+    if e in rer
+        for d in datatypes
+            push!(rer[e], d)
+        end
+    else
+        m[e] = ShouldRerun(datatypes...)
+    end
+end
+
 
 function stop(l::Searcher)
     if l.loop !== nothing && !istaskdone(l.loop)
@@ -581,7 +692,8 @@ function RemoteHPC.start(l; kwargs...)
     end
 end
 
-function loop(l::Searcher; verbosity=0, sleep_time=l.sleep_time)
+function loop(l::Searcher; verbosity=l.verbosity, sleep_time=l.sleep_time)
+    l.verbosity = verbosity
     l.sleep_time = sleep_time
     http_logpath = joinpath(l.rootdir, "HTTP.log")
     logpath = joinpath(l.rootdir, "log.log")
@@ -595,16 +707,14 @@ function loop(l::Searcher; verbosity=0, sleep_time=l.sleep_time)
                                                            RemoteHPC.HTTPLogger(RemoteHPC.TimeBufferedFileLogger(http_logpath, interval=0.0001))))
     simn = simname(l)
     with_logger(logger) do
-        LoggingExtras.withlevel(LoggingExtras.Debug; verbosity=verbosity) do
+        LoggingExtras.withlevel(LoggingExtras.Debug; verbosity=l.verbosity) do
                                    
             while !isalive(local_server())
                 @error "Local server not alive"
                 sleep(1)
             end
             
-            @debugv 2 "[START] Saving" 
             save(l)
-            @debugv 2 "[STOP] Saving"
             if length(l[Results]) == 0
                 @debug "Starting search for global minimum state."
             else
@@ -641,19 +751,20 @@ function loop(l::Searcher; verbosity=0, sleep_time=l.sleep_time)
                 while !l.stop &&  round(now() - curt, Second) < Second(secs) + Millisecond(ms)
                     sleep(0.5)
                 end
-                @debugv 2 "[START] Saving" 
                 save(l)
-                @debugv 2 "[STOP] Saving" 
             end
         end
     end
     @debug "Stopping loop"
     @info "Stopping all pending and Submitted jobs."
+    lck = ReentrantLock()
     @sync for e in @entities_in(l, SimJob)
         Threads.@spawn begin
             if state(e.job) ∈ (RemoteHPC.Pending, RemoteHPC.Submitted)
                 abort(e.job)
-                l[e] = Submit()
+                lock(lck)
+                set_state!(l, e, Submit())
+                unlock(lck)
             end
         end
     end

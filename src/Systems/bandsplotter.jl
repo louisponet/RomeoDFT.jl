@@ -4,8 +4,7 @@ using .Plots
 function Overseer.update(::BandsPlotter, m::AbstractLedger)
     processed = 0
     simn = simname(m)
-    @debugv 2 "$simn - [START] - BandsPlotter"
-    @sync for e in @entities_in(m, SimJob && BandsSettings && TimingInfo && !BandsResults && !Error)
+    @sync for e in @safe_entities_in(m, SimJob && BandsSettings && TimingInfo && !BandsResults && !Error)
         if processed == 10
             break
         end
@@ -38,13 +37,12 @@ function Overseer.update(::BandsPlotter, m::AbstractLedger)
                 processed += 1
                 m[e] = BandsResults(plot_path)
             catch err
-                m[e] = Error(err, stacktrace(catch_backtrace()))
+                m[e] = Error(e, err, stacktrace(catch_backtrace()))
             end
         end
         e.postprocessing += Dates.datetime2unix(now()) -
                                            Dates.datetime2unix(curt)
     end
-    @debugv 2 "$simn - [STOP] - BandsPlotter"
 end
 function plot_states(tl;
                      include_hub_energy = true,

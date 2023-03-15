@@ -50,4 +50,24 @@ function Base.convert(::Type{Results}, x::v0_2.Results)
     return Results(x.state, x.constraining_steps, x.closest_to_target, x.total_energy, x.Hubbard_energy, x.niterations, x.converged, x.fermi, x.converged ? 0.0 : typemax(Float64))
 end
 
+"""
+    Log
+Used for storing logs to an entity.
+"""
+@component struct Log
+    logs::Vector{String}
+end
+Log() = Log(String[])
+
+function Base.show(io::IO, log::Log)
+    print(io, typeof(log), "($(length(log.logs)) logs)")
+end
+function Base.show(io::IO, ::MIME"text/plain", log::Log)
+    println(io, typeof(log), " with $(length(log.logs)) logs:")
+    for (i, l) in enumerate(log.logs)
+        println(io, "[$i] $l")
+    end
+end
+
+
 end

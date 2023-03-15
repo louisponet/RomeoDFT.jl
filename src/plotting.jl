@@ -97,7 +97,7 @@ function plot_states(es::Vector, nat::Int, gs;
     return p
 end
 
-function plot_states(tl::AbstractLedger; unique = false, unique_thr = 0.1, kwargs...)
+function plot_states(tl::AbstractLedger; unique = false, relaxed = false, unique_thr = 0.1, kwargs...)
     str = tl[Template][1].structure
     nat = length(str.atoms)
     
@@ -106,11 +106,18 @@ function plot_states(tl::AbstractLedger; unique = false, unique_thr = 0.1, kwarg
     else
         es = filter(x -> x.converged, collect(@entities_in(tl, Results && FlatBands && !Simulation)))
     end
+    if relaxed
+        es = filter(x -> x ∈ tl[Parent], es)
+    else
+        es = filter(x -> x ∉ tl[Parent], es)
+    end
     if !isempty(tl[BaseCase])
         base_e = tl[entity(tl[BaseCase], length(tl[BaseCase]))]
-        es = [es; base_e]
+        if base_e in tl[Results]
+            es = [es; base_e]
+        end
     end
-    gs = ground_state(tl)
+    gs = tl[ground_state(es)]
     plot_states(es, nat, gs; kwargs...)
 end
 

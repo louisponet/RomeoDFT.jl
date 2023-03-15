@@ -46,7 +46,7 @@ end
 Searcher commands
 """
 module searcher
-    using ..RomeoDFT: searchers_dir, searcher_name, orchestrator_eval, setup_search
+    using ..RomeoDFT: searchers_dir, searcher_name, orchestrator_eval, setup_search, orchestrator_submit
     using ..RomeoDFT.RemoteHPC: InteractiveUtils
     using Comonicon
     """
@@ -150,6 +150,22 @@ module searcher
     - `--Hubbard-strength=<1.0>`: strength of the constraining potential
     - `--Hubbard-conv-thr=<0.1>`: threshold euclidean distance between trial and current occupation matrices after which the constraints are released
     - `--electron-maxstep=<500>`: see QE documentation
+    - `--relax-unique=<false>`: whether a structural relaxation should be ran on each unique state
+    - `--relax-base=<false>`: whether a relaxation should be ran so the search happens for the relaxed structure
+    - `--relax-force-convergence-threshold=<1e-3>`: `forc_conv_thr` in QE
+    - `--relax-energy-convergence-threshold=<1e-4>`: `energy_conv_thr` in QE
+    - `--relax-ion-dynamics=<"bfgs">`: `ion_dynamics` in QE
+    - `--relax-cell-dynamics=<"bfgs">`: `cell_dynamics` in QE
+    - `--relax-no-symmetry=<false>`: whether symmetry should be released during relaxation
+    - `--relax-no-variable-cell=<false>`: whether the cell should be relaxed (`false`) or just the atomic positions (`true`)
+    - `--hp-base=<false>`: whether to calculate U parameters self-consistently before starting the search
+    - `--hp-unique=<false>`: whether to recalculate U self-consistently for each unique state
+    - `--hp-nq1=<2>`: `nq1` in hp.x input
+    - `--hp-nq2=<2>`: `nq2` in hp.x input
+    - `--hp-nq3=<2>`: `nq3` in hp.x input
+    - `--hp-conv-thr-chi=<1e-4>`: `conv_thr_chi` in hp.x input
+    - `--hp-find-atpert=<2>`: `find_atpert` in hp.x input
+    - `--hp-U-conv-thr=<0.1>`: threshold for self-consistency of U
     """
     @cast function create(name::String, scf_file::Comonicon.Arg.Path;
                           structure_file::Comonicon.Arg.Path = scf_file,
@@ -168,12 +184,27 @@ module searcher
                           Hubbard_mixing_beta::Float64 = 0.4,
                           Hubbard_strength::Float64 = 1.0,
                           Hubbard_conv_thr::Float64 = 0.1,
-                          electron_maxstep::Int = 500)
+                          electron_maxstep::Int = 500,
+                          relax_unique::Bool = false,
+                          relax_base::Bool   = false,
+                          relax_force_convergence_threshold::Float64  = 1e-3,
+                          relax_energy_convergence_threshold::Float64 = 1e-4,
+                          relax_ion_dynamics::String  = "bfgs",
+                          relax_cell_dynamics::String = "bfgs",
+                          relax_no_symmetry::Bool      = false,
+                          relax_no_variable_cell::Bool = false,
+                          hp_base::Bool= false,
+                          hp_unique::Bool=false,
+                          hp_nq1::Int = 2,
+                          hp_nq2::Int = 2,
+                          hp_nq3::Int = 2,
+                          hp_conv_thr_chi::Float64 = 1e-4,
+                          hp_find_atpert::Int = 2,
+                          hp_U_conv_thr::Float64 = 0.1)
                           
-        setup_search(name, abspath(scf_file.content), abspath(structure_file.content);
+        l = setup_search(name, abspath(scf_file.content), abspath(structure_file.content);
                       primitive              = primitive,
                       supercell              = [supercell_a, supercell_b, supercell_c],
-                      verbosity              = verbosity,
                       sleep_time             = sleep_time,
                       nflies                 = nrand,
                       unique_thr             = unique_thr,
@@ -184,7 +215,22 @@ module searcher
                       Hubbard_mixing_beta    = Hubbard_mixing_beta,
                       Hubbard_strength       = Hubbard_strength,
                       Hubbard_conv_thr       = Hubbard_conv_thr,
-                      electron_maxstep       = electron_maxstep)
+                      electron_maxstep       = electron_maxstep,
+                      relax_unique                 = relax_unique,
+                      relax_base                   = relax_base,
+                      force_convergence_threshold  = relax_force_convergence_threshold,
+                      energy_convergence_threshold = relax_energy_convergence_threshold,
+                      ion_dynamics                 = relax_ion_dynamics,
+                      cell_dynamics            = relax_cell_dynamics,
+                      symmetry                     = !relax_no_symmetry,
+                      variable_cell                = !relax_no_variable_cell,
+                      hp_base         = hp_base,
+                      hp_unique       = hp_unique,
+                      hp_nq           = (hp_nq1, hp_nq2, hp_nq3),
+                      hp_conv_thr_chi = hp_conv_thr_chi,
+                      hp_find_atpert  = hp_find_atpert,
+                      hp_U_conv_thr   = hp_U_conv_thr)
+        return orchestrator_submit(l; verbosity=verbosity)
     end
 
     """

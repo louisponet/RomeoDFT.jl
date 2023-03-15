@@ -38,13 +38,8 @@ Component that can be used to signal an error has occurred.
     err::Exception
     stack::String
 end
-Error(exc::Exception, trace::StackTraces.StackTrace) = Error(exc, join(trace, "\n"))
-Error(str::String) = Error(ErrorException(str), stacktrace()[2:end])
+Error(e, str::String) = Error(e, ErrorException(str), stacktrace()[2:end])
 Base.convert(::Type{Error}, x::v0_3.Error) = Error(ErrorException(x.msg), "")
-function Base.show(io::IO, err::Error)
-    (print(io, "Error: "); showerror(io, err.err); print(io, "\nTrace:\n"); println(io,
-                                                                                    err.stack))
-end
 
 """
     BandsSettings
@@ -59,18 +54,6 @@ end
 Base.convert(::Type{BandsSettings}, x::v0_2.BandsSettings) =
     BandsSettings(x.kpoints, x.ymin, x.ymax)
     
-function gencalc(job, settings::BandsSettings)
-    if settings.kpoints isa Int
-        kpath = filter(x -> all(y -> y in (1 / 3, 0.5, 0.0), x[1:3]),
-                       Structures.high_symmetry_kpath(job.structure,
-                                                      settings.kpoints))
-        kpath[end] = (kpath[end][1:3]..., 1.0)
-        return Calculations.gencalc_bands(job["scf"], kpath)
-    else
-        return Calculations.gencalc_bands(job["scf"], kpoints)
-    end
-end
-
 """
     NSCFSettings
 
@@ -81,8 +64,6 @@ Component that holds settings for the NSCF calculation.
 end
 Base.convert(::Type{NSCFSettings}, x::v0_2.NSCFSettings) =
     NSCFSettings(x.kpoints)
-gencalc(job, settings::NSCFSettings) = 
-    Calculations.gencalc_nscf(job[1], settings.kpoints)
 
 """
     ProjwfcSettings
@@ -97,9 +78,6 @@ Component that holds settings for the projwfc calculation.
 end
 Base.convert(::Type{ProjwfcSettings}, x::v0_2.ProjwfcSettings) =
     ProjwfcSettings(x.Emin_rel, x.Emax_rel, x.deltaE, x.dosratio)
-gencalc(job, settings::ProjwfcSettings) = 
-    Calculations.gencalc_projwfc(job[1], settings.Emin, settings.Emax, settings.deltaE)
- 
 
 """
     WannierSettings
@@ -114,15 +92,6 @@ end
 Base.convert(::Type{WannierSettings}, x::v0_2.WannierSettings) =
     WannierSettings(x.plot_wannier, x.projections, x.dos_ratio)
     
-function gencalc(job, wsettings::WannierSettings)
-    for (elsym, projs) in wsettings.projections
-        for a in job.structure[elsym]
-            a.projections = projs
-        end
-    end
-    return Calculations.gencalc_wan(job, wsettings.dos_ratio; plot_wannier = wsettings.plot_wannier)
-end 
-
 @component struct Hybrid end
 
 """
@@ -137,10 +106,4 @@ end
 
 Trial(s::State) = Trial(s, "unknown")
 Base.convert(::Type{Trial}, x::v0_1.Trial) = Trial(x.state, "unknown")
-
-function Base.show(io::IO, t::Trial)
-    println(io, t.state)
-    println(io, "origin: $(t.origin)")
-end
-    
 end

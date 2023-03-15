@@ -48,15 +48,6 @@ end
     converged::Bool
 end
 
-function Base.show(io::IO, res::Results)
-    println(io, "Results:")
-    println(io, res.state)
-    for f in fieldnames(Results)
-        f == :state && continue
-        println(io, "$f: $(getfield(res, f))")
-    end
-end
-
 @pooled_component struct ServerInfo
     server::String
     pw_exec::String
@@ -88,33 +79,17 @@ The parameters of the FireFly algorithm.
     β::Float64
 end
 
-function Base.show(io::IO, sim::Simulation)
-    println(io, "Simulation:")
-    for f in fieldnames(Simulation)
-        print(io, "\t$f: ")
-        if f == :template_structure
-            print(io, "structure with $(length(sim.template_structure.atoms)) atoms")
-        elseif f == :template_calculation
-            print(io, "calculation with ")
-            for flag in (:conv_thr, :mixing_beta, :Hubbard_mixing_beta, :Hubbard_conv_thr)
-                if haskey(sim.template_calculation, flag)
-                    print(io, "$flag=$(sim.template_calculation[flag]) ")
-                end
-            end
-        else
-            print(io, getfield(sim, f))
-        end
-        print(io, "\n")
-    end
-end
-
+# These mirror to some degree the RemoteHPC.JobState
 """
     Submit
 
 Signals whether a job should be submitted.
 """
-@component struct Submit end
-
+@component struct Submit    end
+@component struct Submitted end
+@component struct Running   end
+@component struct Completed end
+@component struct Pulled end
 
 @pooled_component Base.@kwdef mutable struct RelaxSettings
     force_convergence_threshold::Float64  = 1e-3
