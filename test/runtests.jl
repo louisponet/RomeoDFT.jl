@@ -120,7 +120,11 @@ for case in test_cases
     @testset "$case" begin
         server_info, template, n_entities = create_mockdata(case)
     
-        ledger_dir = tempname()
+        # ledger_dir = tempname()
+        ledger_dir = "/tmp/Romeotest/"
+        ispath(ledger_dir) && rm(ledger_dir, recursive=true)
+        
+        @info "Running at $ledger_dir"
         l = Searcher(rootdir=ledger_dir, sleep_time = 0.01)
         Entity(l, server_info)
         base_e = Entity(l, BaseCase(),
@@ -132,13 +136,14 @@ for case in test_cases
                                IntersectionSearcher(0.25, 100),
                                StopCondition(0.1, 3),
                                Generation(1))
+                               
         RomeoDFT.set_mode!(l, :search)
         save(l)
         @test ispath(joinpath(ledger_dir, string(RomeoDFT.DATABASE_VERSION), "ledger.jld2"))
         l = load(l)
         @test l.mode == :search
         @test l.sleep_time == 0.01
-        l.loop = Threads.@spawn RomeoDFT.loop(l, verbosity=2)
+        l.loop = Threads.@spawn RomeoDFT.loop(l, verbosity=3)
         p = RomeoDFT.ProgressMeter.ProgressUnknown("Simulating $case...", spinner=true)        
         while l.loop !== nothing && !istaskfailed(l.loop)
             RomeoDFT.ProgressMeter.next!(p, showvalues=[("Processed:", length(l[Done]))])

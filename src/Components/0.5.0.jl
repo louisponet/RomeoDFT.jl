@@ -1,7 +1,7 @@
 module v0_5
 using ..Overseer
 using ..v0_4
-using ..RomeoDFT: State, Unknown, TrialOrigin, MixingMode, UnknownMixing, Structure, Calculation, DFWannier
+using ..RomeoDFT: State, Unknown, TrialOrigin, MixingMode, UnknownMixing, Structure, Calculation, DFWannier, PostProcessSettings
 using ..DFControl: Projection
 using ..Structures
 using ..Calculations
@@ -136,7 +136,7 @@ end
 
 Component that holds the settings to generate the bands calculation input and eventual band plot.
 """
-@pooled_component Base.@kwdef mutable struct BandsSettings
+@pooled_component Base.@kwdef mutable struct BandsSettings <: PostProcessSettings
     kpoints::Union{Vector{NTuple{4,Float64}},Int} = 20
     ymin::Float64 = -5.0
     ymax::Float64 = 5.0
@@ -150,7 +150,7 @@ Base.convert(::Type{BandsSettings}, x::v0_4.BandsSettings) =
 
 Component that holds settings for the wannier calculation.
 """
-@pooled_component Base.@kwdef mutable struct WannierSettings
+@pooled_component Base.@kwdef mutable struct WannierSettings <: PostProcessSettings
     plot_wannier::Bool = false
     projections::Dict{Symbol,Vector{Projection}}
     dos_ratio::Float64 = 0.2
@@ -164,7 +164,7 @@ Base.convert(::Type{WannierSettings}, x::v0_4.WannierSettings) =
 
 Component that holds settings for the projwfc calculation.
 """
-@pooled_component Base.@kwdef mutable struct ProjwfcSettings
+@pooled_component Base.@kwdef mutable struct ProjwfcSettings <: PostProcessSettings
     Emin::Float64 = 20
     Emax::Float64 = 10
     deltaE::Float64 = 0.1
@@ -178,7 +178,7 @@ Base.convert(::Type{ProjwfcSettings}, x::v0_4.ProjwfcSettings) =
 
 Component that holds settings for the NSCF calculation.
 """
-@pooled_component Base.@kwdef mutable struct NSCFSettings
+@pooled_component Base.@kwdef mutable struct NSCFSettings <: PostProcessSettings
     kpoints::NTuple{3,Int} = (6, 6, 6)
 end
 Base.convert(::Type{NSCFSettings}, x::v0_4.NSCFSettings) =

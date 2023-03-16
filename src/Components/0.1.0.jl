@@ -100,17 +100,98 @@ Signals whether a job should be submitted.
     variable_cell::Bool                   = true
 end
 
-@component struct Parent
-    parent::Entity
-end
-@component struct RelaxChild
-    child::Entity
-end
+"""
+    RelaxResults
 
+Holds the results of a relaxation.
+"""
 @component struct RelaxResults
     n_steps::Int
     total_force::Float64
     final_structure::Structure
-end    
+end
+
+"""
+    Log
+Used for storing logs to an entity.
+"""
+@component struct Log
+    logs::Vector{String}
+end
+Log() = Log(String[])
+
+function Base.show(io::IO, log::Log)
+    print(io, typeof(log), "($(length(log.logs)) logs)")
+end
+function Base.show(io::IO, ::MIME"text/plain", log::Log)
+    println(io, typeof(log), " with $(length(log.logs)) logs:")
+    for (i, l) in enumerate(log.logs)
+        println(io, "[$i] $l")
+    end
+end
+
+"""
+    ShouldRerun
+
+Signals that a job should be reran.
+`data_to_pop` denotes the [`Components`](@ref Component) that should be removed from the [`Entity`](@ref).
+"""
+@component struct ShouldRerun
+    data_to_pop::Set{DataType}
+end
+ShouldRerun(args::DataType...) = ShouldRerun(Set(args))
+Base.push!(s::ShouldRerun, d::DataType) = push!(s.data_to_pop, d)
+
+"""
+    Rerun
+
+Saves how many times a job has been reran.
+"""
+@component struct Rerun
+    count::Int
+end
+
+"""
+    HPSettings
+
+Holds the settings for a HP calculation.
+"""
+@pooled_component Base.@kwdef struct HPSettings
+    nq::NTuple{3, Int} = (2,2,2)
+    conv_thr_chi::Float64 = 1e-6
+    find_atpert::Int = 1
+    U_conv_thr::Float64 = 0.1
+end
+
+"""
+    HPResults
+
+Holds the results of a HP calculations.
+"""
+@component struct HPResults
+    U::Vector
+end
+
+"""
+    Child
+
+Signals that an [`Entity`](@ref) has a child entity, e.g. as part of postprocessing.
+"""
+@component struct Child
+    child::Entity
+end
+
+"""
+    Parent
+
+Signals that an [`Entity`](@ref) has a Parent from which it's derived.
+"""
+@component struct Parent
+    parent::Entity
+end
+
+@component struct RelaxChild
+    child::Entity
+end
 
 end

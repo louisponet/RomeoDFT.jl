@@ -1,26 +1,3 @@
-function rand_trial(s::Structure, norb, nelec)
-    mag_ats = filter(x -> x.dftu.U != 0.0 || sum(x.magnetization) != 0.0, s.atoms)
-    nat = length(mag_ats)
-    occs = map(1:nat) do ia
-        n = norb[ia]
-        nangles = div(n * (n - 1), 2)
-        rand_angles() = Angles([π * (rand() - 0.5) for i in 1:nangles], 1.0, (n, n))
-        ox_state_offset = rand([-1, 0, 1])
-        diagvec = zeros(2n)
-        while sum(diagvec) < min(nelec + ox_state_offset, 2n)
-            diagvec[rand(1:2n)] = 1.0
-        end
-        if n == 1
-            return DFWannier.ColinMatrix(diagm(0 => diagvec[1:1]), diagm(0 => diagvec[2:2]))
-        else
-            diag_occupations = DFWannier.MagneticVector(diagvec)
-            rotmat = DFWannier.ColinMatrix(Matrix(rand_angles()), Matrix(rand_angles()))
-            return Matrix(Eigen(diag_occupations, rotmat))
-        end
-    end
-
-    return Trial(State(occs), RandomMixed)
-end
 
 function mix_eulerangles(flies, trial, generation, norb, nelec)
     new_occs = Vector{Trial}(undef, length(flies))
@@ -430,3 +407,48 @@ function Overseer.update(::Archiver, m::AbstractLedger)
     end
 end
 
+# Was in JobCreator
+    # @error_capturing_threaded for e in @safe_entities_in(m, Simulation && Trial && Generation && !SimJob && !Results)
+    #     if tot_new > max_new
+    #         break
+    #     elseif e.generation == e.current_generation
+    #         tot_new += 1
+    #         simn = simname(m)
+    #         loc_dir = local_dir(m, e)
+    #         if ispath(loc_dir)
+    #             rm(loc_dir; recursive = true)
+    #         end
+            
+    #         if e in m[Hybrid]
+    #             c1 = deepcopy(e.template_calculation)
+    #             c2 = deepcopy(e.template_calculation)
+    #             suppress() do
+    #                 c1[:system][:Hubbard_conv_thr] = 1e-5
+    #                 c1[:system][:Hubbard_maxstep] = 100000
+    #                 c1[:restart_mode] = "from_scratch"
+    #                 set_name!(c1, "scf_1")
+
+    #                 c2[:restart_mode] = "restart"
+    #             end
+                    
+    #             calcs = Calculation[c1, c2]
+    #         else
+    #             calcs = Calculation[deepcopy(e.template_calculation)]
+    #         end
+    #         suppress() do
+    #             set_name!(calcs[end], "scf")
+    #         end
+    #         j = Job("$(simn)_gen_$(e.current_generation)_id_$(Entity(e).id)",
+    #                 deepcopy(e.template_structure),
+    #                 calcs;
+    #                 dir = loc_dir, server = local_server().name,
+    #                 environment = "default")
+    #         set_flow!(j, "" => true)
+    #         suppress() do
+    #             j.calculations[1][:system][:Hubbard_occupations] = generate_Hubbard_occupations(e[Trial].state, j.structure)
+    #             delete!(j.calculations[1], :disk_io)
+    #         end
+    #         m[e] = SimJob(loc_dir, "", j)
+    #         set_state!(m, e, Submit())
+    #     end
+    # end

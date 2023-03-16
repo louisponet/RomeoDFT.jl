@@ -89,19 +89,20 @@ function results_from_output(res::Dict, basecase=false)
         state   = State()
     end
     hub_energy     = haskey(res, :Hubbard_energy) ? res[:Hubbard_energy][end] : typemax(Float64)
-    total_energy   = haskey(res, :total_energy) ? res[:total_energy][end] : typemax(Float64)
-    accuracy   = haskey(res, :accuracy) ? res[:accuracy][end] : typemax(Float64)
-    scf_iterations = haskey(res, :scf_iteration) ? res[:scf_iteration][end] : 0
-    fermi          = haskey(res, :fermi) ? res[:fermi] : 0.0
-    converged = res[:converged]
+    total_energy   = haskey(res, :total_energy)   ? res[:total_energy][end]   : typemax(Float64)
+    accuracy       = haskey(res, :accuracy)       ? res[:accuracy][end]       : typemax(Float64)
+    scf_iterations = haskey(res, :scf_iteration)  ? res[:scf_iteration][end]  : 0
+    fermi          = haskey(res, :fermi)          ? res[:fermi]               : 0.0
+    converged      = res[:converged]
     return Results(state, minid, mindist, total_energy, hub_energy, scf_iterations,
                                        converged, fermi, accuracy)
 end
 
 function hubbard_outputdata(j; calcs = map(x->x.name, j.calculations), kwargs...)
-    parse_func(d, x, y) = d[:Hubbard_iterations] = d[:scf_iteration][end]
-    dict = Dict([n => ["Hubbard_conv true" => parse_func] for n in calcs])
-    return outputdata(j; calcs = calcs, extra_parse_funcs=dict, kwargs...)
+    hub_parse_func(d, x, y) = d[:Hubbard_iterations] = d[:scf_iteration][end]
+    
+    parse_funcs = Dict([n => ["Hubbard_conv true" => hub_parse_func] for n in calcs])
+    return outputdata(j; calcs = calcs, extra_parse_funcs=parse_funcs, kwargs...)
 end
 
 function Overseer.update(::ResultsProcessor, m::AbstractLedger)
@@ -109,18 +110,25 @@ function Overseer.update(::ResultsProcessor, m::AbstractLedger)
         if !ispath(joinpath(e.local_dir, "scf.out"))
             continue
         end
+        
         curt = now()
+        
         j = local_load(Job(e.local_dir))
-        o = hubbard_outputdata(j, calcs = ["scf"]) 
+        o = hubbard_outputdata(j, calcs = ["scf"])
+        
         if !isempty(o)
             res = o["scf"]
             results = results_from_output(res, e in m[BaseCase])
-            e.scf_time = haskey(res, :timing) ? Dates.tons(res[:timing][end].cpu) / 1000 : e.running
+            
             m[e] = results
+            
+            e.scf_time = haskey(res, :timing) ? Dates.tons(res[:timing][end].cpu) / 1000 : e.running
+            
             if haskey(res, :bands) && haskey(res, :total_magnetization)
                 bands = flatbands(res)
                 m[e] = FlatBands(bands)
             end
+            
         end
         e.postprocessing += Dates.datetime2unix(now()) - Dates.datetime2unix(curt)
     end
@@ -139,10 +147,6 @@ After this, the flies themselves are [`Archived`](@ref).
 struct UniqueExplorer <: System end
 Overseer.requested_components(::UniqueExplorer) = (Archived, Intersection, NSCFSettings, ProjwfcSettings, BandsSettings, HPSettings, Child)
 
-@component struct Child
-    child::Entity
-end
-
 function Overseer.update(::UniqueExplorer, m::AbstractLedger)
     if isempty(m[Unique])
         return
@@ -155,56 +159,66 @@ function Overseer.update(::UniqueExplorer, m::AbstractLedger)
     postprocess = any(x -> unique_e in m[x], (BandsSettings, NSCFSettings, ProjwfcSettings, RelaxSettings, HPSettings))
     postprocess_children = any(x -> unique_e in m[x], (RelaxSettings, HPSettings)) # because structure will change
     
-    rescomp = m[Results]
+    rescomp   = m[Results]
     bandscomp = m[FlatBands]
 
-    @error_capturing for e in @safe_entities_in(m, Pulled && Results && FlatBands && !Unique && !Parent && !Done)
+    @error_capturing for e in @safe_entities_in(m, Pulled && Results && !Unique && !Parent && !Done)
 
-        state = e.state
-        if e.converged && !isempty(state.occupations)
-            found = false
-            ebands = e.bands
-            @sync for e2 in @safe_entities_in(m, Unique && FlatBands && Results)
-                Threads.@spawn begin
-                    found && return
-                    momdiffs = e2.state.magmoms .- state.magmoms
-                    if sum(abs, momdiffs) <= unique_c.thr
-                        if (unique_c.bands && sssp_distance(ebands, e2[FlatBands].bands, e.fermi) <= unique_c.thr) ||
-                           Euclidean()(e2.state, state) <= unique_c.thr
-                            found = true
-                        end
+        if !e.converged || isempty(e.state.occupations)
+            m[e] = Done(false)
+            continue
+        end
+        
+        found = false
+        ebands = bandscomp[e].bands
+        @sync for e2 in @safe_entities_in(m, Unique && FlatBands && Results)
+            Threads.@spawn begin
+                found && return
+                
+                momdiffs = e2.state.magmoms .- e.state.magmoms
+                sum(abs, momdiffs) >= unique_c.thr && return
+                
+                if unique_c.bands
+                    if sssp_distance(ebands, e2[FlatBands].bands, e.fermi) >= unique_c.thr
+                        return
                     end
+                elseif Euclidean()(e2.state, e.state) >= unique_c.thr
+                    return
                 end
-            end
-            if !found
-                m[Unique][e] = unique_e
-                if !postprocess
-                    m[e] = Done(false)
-                else
-                    if postprocess_children
-                        pp_e = Entity(m, Parent(e.e), Trial(state, PostProcess), m[Generation][e], deepcopy(m[Template][e]))
-                        m[e] = Child(Entity(pp_e))
-                        m[e] = Done(false)
-                    else
-                        pp_e = e
-                    end
-                    for ct in (BandsSettings, NSCFSettings, ProjwfcSettings, RelaxSettings, HPSettings) 
-                        if !(pp_e in m[ct]) && unique_e in m[ct]
-                            m[ct][pp_e] = unique_e
-                        end
-                    end
-                end
-                new_states += 1
-            else
-                e ∉ m[BaseCase] && pop!(bandscomp, e)
-                m[e] = Done(false)
+                found = true
             end
         end
+        
+        if found
+            e ∉ m[BaseCase] && pop!(bandscomp, e)
+            m[e] = Done(false)
+            continue
+        end
+        
+        m[Unique][e] = unique_e
+        
+        if !postprocess
+            m[e] = Done(false)
+            continue
+        end
+        
+        if postprocess_children
+            pp_e = Entity(m, Parent(e.e), Trial(e.state, PostProcess), m[Generation][e], deepcopy(m[Template][e]))
+            m[e] = Child(Entity(pp_e))
+            m[e] = Done(false)
+        else
+            pp_e = e
+        end
+        
+        for ct in (BandsSettings, NSCFSettings, ProjwfcSettings, RelaxSettings, HPSettings) 
+            if !(pp_e in m[ct]) && unique_e in m[ct]
+                m[ct][pp_e] = unique_e
+            end
+        end
+        
+        new_states += 1
     end
-    for e in @safe_entities_in(m, SimJob && Results && Pulled && !FlatBands && !Done)
-        m[e] = Done(false)
-    end
-    simn = simname(m)
+    
     if new_states != 0
         @debugv 1 "Found $new_states new unique states."
     end

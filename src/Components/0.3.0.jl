@@ -2,7 +2,7 @@ module v0_3
 using ..Overseer
 using ..DFControl.Jobs
 using ..v0_2
-using ..RomeoDFT: State, local_load
+using ..RomeoDFT: State, local_load, PostProcessSettings
 using ..RomeoDFT.DFControl: Projection, Calculation, QE, Structure, Job
 
 """
@@ -26,7 +26,7 @@ end
 
 Settings for scf calculations, replacements will be used to overwrite flags from the template Calculation.
 """
-@component struct SCFSettings
+@component struct SCFSettings <: PostProcessSettings
     replacement_flags::Dict
     kpoints::NTuple{6,Int}
 end
@@ -53,7 +53,4 @@ A flat representation of a bandstructure to be used with [`sssp_distance`](@ref)
 end
 
 
-@component struct Bin
-    entities::Vector{Entity}
-end
 end

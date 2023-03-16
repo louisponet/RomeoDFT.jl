@@ -17,6 +17,8 @@ Base.@kwdef mutable struct Searcher <: AbstractLedger
     verbosity  ::Int                           = 0
 end
 
+mode(m::Searcher) = m.mode
+
 function Searcher(dir::AbstractString; kwargs...)
     dir = isdir(dir) ? dir : searchers_dir(dir)
     Searcher(; rootdir = abspath(dir), kwargs...)
@@ -58,6 +60,17 @@ local_dir(m::Searcher, e::AbstractEntity) = joinpath(m, "job_backups", "$(Entity
 function simname(m)
     fdir = searcher_name(m)
     return replace(fdir, "/" => "_")
+end
+
+all_servers(m::Searcher) = [map(x -> Server(x.server), m[ServerInfo].data); local_server()]
+
+function average_runtime(m::Searcher)
+    successful = filter(x->x.converged, @entities_in(m, Results && TimingInfo))
+    if length(successful) == 0
+        return 0
+    else
+        return sum(x->x.scf_time, successful) / length(successful)
+    end
 end
 
 ##### OVERSEER Functionality
@@ -113,30 +126,44 @@ function RemoteHPC.save(l::Searcher)
     return (mkpath(storage_dir(l)); save(storage_dir(l), l))
 end
 
-function RemoteHPC.save(rootdir::String, l::AbstractLedger)
+fieldnames_to_save(::Searcher) = filter(x -> x ∉ (:rootdir, :loop, :ledger, :locks, :timer), fieldnames(Searcher))
+
+function RemoteHPC.save(rootdir::String, l::Searcher)
     lp = joinpath(rootdir, "ledger.jld2")
     if ispath(lp)
         cp(lp, joinpath(rootdir, "ledger_bak.jld2"); force = true)
     end
-    return JLD2.jldsave(joinpath(rootdir, "ledger.jld2");
-                        ledger     = Overseer.ledger(l),
-                        version    = DATABASE_VERSION,
-                        sleep_time = l.sleep_time,
-                        finished   = l.finished,
-                        mode       = l.mode,
-                        verbosity = l.verbosity)
+
+
+    JLD2.jldopen(joinpath(rootdir, "ledger.jld2"), "w") do f
+    
+        comp_group = JLD2.Group(f, "components")
+        for (T, c) in components(l)
+            if !isempty(c)
+                comp_group["$T"] = c
+            end
+        end
+        
+        for name in fieldnames_to_save(l)
+            f["$name"] = getfield(l, name)
+        end
+
+        f["entities"] = entities(l)
+        f["free_entities"] = Overseer.free_entities(l)
+    end
 end
 
 function RemoteHPC.load(l::Searcher; version = nothing)
     if version === nothing
         versions = []
         for d in readdir(l.rootdir)
-            if isdir(joinpath(l.rootdir, d)) && "ledger.jld2" in readdir(joinpath(l.rootdir, d))
-                try
-                    push!(versions, VersionNumber(d))
-                catch
-                    nothing
-                end
+            
+            !isdir(joinpath(l.rootdir, d)) || "ledger.jld2" ∉ readdir(joinpath(l.rootdir, d)) && continue
+            
+            try
+                push!(versions, VersionNumber(d))
+            catch
+                nothing
             end
         end
         version = maximum(versions)
@@ -170,43 +197,63 @@ function RemoteHPC.load(rootdir::String, l::AbstractLedger)
     for sys in filter(x -> isdefined(RomeoDFT, x) && getfield(RomeoDFT, x) isa DataType && getfield(RomeoDFT, x) <: System, names(RomeoDFT, all=true))
         typemap["Occupations."*string(sys)] = getfield(RomeoDFT, sys)
     end
+   
+    saved_components = JLD2.jldopen(joinpath(rootdir, "ledger.jld2"), "r", typemap=typemap) do f
+        for name in fieldnames_to_save(l)
+            curfield = getfield(l, name)
+            setfield!(l, name, get(f, "$name", curfield))
+        end
+        
+        if haskey(f, "components")
+            compdict = Dict{DataType, Overseer.AbstractComponent}()
+            for cname in keys(f["components"])
+                c = f["components"][cname]
+                compdict[eltype(c)] = c
+            end
+            l.ledger.entities = f["entities"]
+            l.ledger.free_entities = f["free_entities"]
+            return compdict
+        else
+            tl = f["ledger"]
+            l.ledger.entities = tl.entities
+            l.ledger.free_entities = tl.free_entities
+            return components(tl)
+        end
+    end
+
+    Overseer.ledger(l).components = saved_components
     
-    ledger = JLD2.jldopen(joinpath(rootdir, "ledger.jld2"), "r", typemap=typemap) do f
-        l.sleep_time = get(f, "sleep_time", l.sleep_time)
-        l.mode = get(f, "mode", l.mode)
-        l.mode = get(f, "searcher_stage", l.mode)
-        l.finished = get(f, "finished", l.finished)
-        l.verbosity = get(f, "verbosity", l.verbosity)
-        return f["ledger"]
-    end
-    for c in keys(components(l))
-        Overseer.ensure_component!(ledger, c)
-    end
     if l.mode == :searching
         l.mode = :search
     end
-    set_searcher_stages!(ledger, l.mode)
 
+    current_components = Overseer.ledger(l).components
     for (t, mods) in TYPE_MODS
         # do sequential update
-        for i in 1:length(mods)-1
-            old_t = getfield(mods[i], t)
-            new_t = getfield(mods[i+1], t)
-            if old_t != new_t && old_t ∈ ledger
-                Overseer.ensure_component!(ledger, new_t)
-                newcomp = ledger[new_t]
-                for e in @entities_in(ledger, old_t)
-                    newcomp[e] = version_convert(e[old_t], (t, mods[2:end]), 1)
-                end
-                delete!(components(ledger), old_t)
-                if newcomp isa PooledComponent
-                    Overseer.make_unique!(newcomp)
-                end
-            end
+        mod_types = getfield.(mods, t)
+        curid = findfirst(T -> haskey(current_components, T), mod_types)
+        if curid === nothing || curid == length(mod_types)
+            continue
         end
+        
+        old_T = mod_types[curid]
+        new_T = mod_types[end]
+        Overseer.ensure_component!(l, new_T)
+                
+        newcomp = components(l)[new_T]
+        for e in @entities_in(current_components[old_T])
+            newcomp[e] = version_convert(e[old_T], mod_types, curid)
+        end
+                
+        if newcomp isa PooledComponent
+            Overseer.make_unique!(newcomp)
+        end
+
+        delete!(current_components, old_T)
     end
-    Overseer.ensure_component!(ledger, Log)
-    l.ledger = ledger
+    
+    set_searcher_stages!(l, l.mode)
+    Overseer.ensure_component!(l, Log)
     return l
 end
 
@@ -231,18 +278,16 @@ end
 
 function set_searcher_stages!(l::AbstractLedger, s::Symbol)
     if s == :postprocess
-        l.stages = [core_stage()]
+        Overseer.ledger(l).stages = [core_stage()]
     elseif s == :search
-        l.stages = search_stages()
+        Overseer.ledger(l).stages = search_stages()
     elseif s == :cleanup
-        l.stages = [cleanup_stage()]
+        Overseer.ledger(l).stages = [cleanup_stage()]
     else
         error("Searcher stage $s not recognized...")
     end
     prepare(l)
 end
-
-set_searcher_stages!(l::Searcher) = set_searcher_stages!(l.ledger, l.mode)
 
 function set_mode!(l::Searcher, mode::Symbol)
     set_searcher_stages!(l.ledger, mode)
@@ -735,7 +780,7 @@ function loop(l::Searcher; verbosity=l.verbosity, sleep_time=l.sleep_time)
         end
         with_logger(logger) do
             LoggingExtras.withlevel(LoggingExtras.Debug; verbosity=verbosity) do
-                if isalive(local_server())
+                if all(isalive, all_servers(l))
                     try 
                         @debugv 1 "[START] Updating" 
                         RemoteHPC.@timeout 600 update(l)

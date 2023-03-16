@@ -84,3 +84,7 @@ function eigvec_order(occ1, occ2)
     return (; eigvals1, eigvals2, eigvecs1, eigvecs2, order)
 end
 
+maximum_generation(v)                 = maximum(x -> x.generation, v, init=0)
+maximum_generation(m::AbstractLedger) = maximum_generation(m[Generation])
+
+ismagnetic(at::Atom) = sum(at.magnetization) != 0 && at.dftu.U != 0

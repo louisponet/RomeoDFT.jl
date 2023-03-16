@@ -1,3 +1,8 @@
+"""
+    Relaxor
+
+Creates the inputs for a relaxation calculation from [`RelaxSettings`](@ref).
+"""
 struct Relaxor <: System end
 
 Overseer.requested_components(::Relaxor) = (RelaxSettings, RelaxResults) 
@@ -37,9 +42,15 @@ function Overseer.update(::Relaxor, m::AbstractLedger)
     end
 end
 
+"""
+    RelaxProcessor
+
+Processes the results of a relaxation and puts them in [`Results`](@ref) and
+[`RelaxResults`](@ref).
+"""
 struct RelaxProcessor <: System end
 
-Overseer.requested_components(::RelaxProcessor) = (Template, RelaxSettings, RelaxResults, Parent, RelaxChild)
+Overseer.requested_components(::RelaxProcessor) = (Template, RelaxSettings, RelaxResults, Parent)
 
 function Overseer.update(::RelaxProcessor, m::AbstractLedger)
     @error_capturing for e in @safe_entities_in(m, Pulled && SimJob && RelaxSettings)
@@ -100,16 +111,21 @@ function Overseer.update(::RelaxProcessor, m::AbstractLedger)
                     should_rerun(m, e, SimJob)
                     continue
                 elseif res[:converged] && !res[:finished]
-                    tc = deepcopy(e.job[cname])
-                    suppress() do
-                        tc[:calculation] = "scf"
-                        Calculations.set_name!(tc, "scf")
+                    scf_id = findfirst(x->x.name == "scf", e.job.calculations)
+                    if scf_id === nothing
+                        tc = deepcopy(e.job[cname])
+                        suppress() do
+                            tc[:calculation] = "scf"
+                            Calculations.set_name!(tc, "scf")
+                        end
+                        cid = findfirst(x->x.name == cname, e.job.calculations)
+                        insert!(e.job, cid + 1, tc)
+                        scf_id = cid + 1
                     end
-                    cid = findfirst(x->x.name == cname, e.job.calculations)
-                    insert!(e.job, cid + 1, tc)
-                    for i = cid+2:length(e.job.calculations)
+                    for i = scf_id:length(e.job.calculations)
                         e.job.calculations[i].run = true
                     end
+                        
                     should_rerun(m, e) 
                 end
                 
