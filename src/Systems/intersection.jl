@@ -193,7 +193,7 @@ function rand_trial(n_orb_per_at, n_elec_per_at)
 end
 
 function Overseer.update(::RandomTrialGenerator, m::AbstractLedger)
-    if isempty(m[RandomSearcher])
+    if isempty(m[RandomSearcher]) || isempty(m[BaseCase])
         return
     end
     # First make sure the base case calculation is finished

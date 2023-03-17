@@ -95,9 +95,10 @@ function Overseer.update(::RelaxProcessor, m::AbstractLedger)
                     end
                     log(e, "Diff of relaxed structure with original: $diff") 
                     
-                    # Update structure 
+                    # Update structure for possibly rerunning
                     Structures.update_geometry!(m[Template][e].structure, str)
-                    if e.e == entity(m[BaseCase], 1)
+                    Structures.update_geometry!(e.job.structure, str)
+                    if !isempty(m[BaseCase]) && e.e == entity(m[BaseCase], 1)
                         search_e = entity(m[Unique], 1)
                         Structures.update_geometry!(m[Template][search_e].structure,
                                                              res[:final_structure])

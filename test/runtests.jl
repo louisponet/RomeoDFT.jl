@@ -120,8 +120,8 @@ for case in test_cases
     @testset "$case" begin
         server_info, template, n_entities = create_mockdata(case)
     
-        # ledger_dir = tempname()
-        ledger_dir = "/tmp/Romeotest/"
+        ledger_dir = tempname()
+        # ledger_dir = "/tmp/Romeotest/"
         ispath(ledger_dir) && rm(ledger_dir, recursive=true)
         
         @info "Running at $ledger_dir"

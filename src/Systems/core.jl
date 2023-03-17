@@ -17,10 +17,10 @@ function Overseer.update(::JobCreator, m::AbstractLedger)
     n_current_simjobs   = length(@entities_in(m, SimJob && !Error))
     max_concurrent_jobs = sum(x -> Server(x.server).max_concurrent_jobs, m[ServerInfo].data)
     max_new             = max_concurrent_jobs - n_current_simjobs
-    
+
     tot_new = 0
     # initial job
-    @error_capturing_threaded for e in @safe_entities_in(m, Template && (BaseCase || SCFSettings || Trial) && !SimJob && !Done)
+    @error_capturing_threaded for e in @entities_in(m, Template && (BaseCase || SCFSettings || Trial) && !SimJob && !Done)
         if tot_new > max_new && e ∉ m[BaseCase]
             continue
         end
@@ -75,7 +75,7 @@ function Overseer.update(::JobCreator, m::AbstractLedger)
                   dir = local_dir(m, e), server = local_server().name, environment = "default")
 
         m[e] = SimJob(job.dir, "", job)
-        set_state!(m, e, Submit())
+        set_status!(m, e, Submit())
     end
 end
 
@@ -138,7 +138,6 @@ function Overseer.update(::JobSubmitter, m::AbstractLedger)
     # We find the server to submit the next batch to by finding the one
     # with the pool with the least entities
     sinfo = m[ServerInfo]
-    submit_comp = m[Submit]
     ensure_pseudos_uploaded!(m) 
 
     # TODO: For now only 1 server
@@ -152,6 +151,7 @@ function Overseer.update(::JobSubmitter, m::AbstractLedger)
         return
     end
 
+    submit_comp = m[Submit]
     pvec = sortperm(submit_comp.indices.packed, rev=true)
     permute!(submit_comp, pvec)
     
@@ -167,7 +167,7 @@ function Overseer.update(::JobSubmitter, m::AbstractLedger)
                 curt = Dates.datetime2unix(now())
                 m[e] = TimingInfo(curt, curt, 0.0, 0.0, 0.0, 0.0, "", 0.0, 0.0)
             end
-            set_state!(m, e, Running())
+            set_status!(m, e, Running())
             continue
         end
         
@@ -203,7 +203,7 @@ function Overseer.update(::JobSubmitter, m::AbstractLedger)
             m[e] = TimingInfo(curt, curt, 0.0, 0.0, 0.0, 0.0, "", 0.0, 0.0)
         end
         
-        set_state!(m, e, Submitted())
+        set_status!(m, e, Submitted())
     end
 end
 
@@ -233,7 +233,7 @@ function Overseer.update(::JobMonitor, m::AbstractLedger)
         dt     = curt - prevt
         
         s = state(e.job)
-        set_state!(m, e, s)
+        set_status!(m, e, s)
         
         if s == RemoteHPC.Pending
             e.pending += dt
@@ -276,7 +276,7 @@ function Overseer.update(::JobMonitor, m::AbstractLedger)
         elseif s in (RemoteHPC.NodeFail, RemoteHPC.Cancelled)
             should_rerun(m, e)
         elseif isparseable(s)
-            set_state!(m, e, Completed())
+            set_status!(m, e, Completed())
         end
         e.cur_time = curt
     end
@@ -336,7 +336,7 @@ function Overseer.update(::OutputPuller, m::AbstractLedger)
         if should_resubmit
             should_rerun(m, e)
         else
-            set_state!(m, e, Pulled())
+            set_status!(m, e, Pulled())
         end
         
         m[e].postprocessing += Dates.datetime2unix(now()) - curt
@@ -376,12 +376,11 @@ function Overseer.update(::Rerunner, m::AbstractLedger)
             if d == SimJob
                 trypop!(m[ServerInfo], e)
                 trypop!(m[Unique], e)
-                trypop!(m[Child], e)
                 from_scratch = true
             end
         end
         if !from_scratch
-            set_state!(m, e, Submit())
+            set_status!(m, e, Submit())
         end
         
         trypop!(m[Done], e)
@@ -417,8 +416,8 @@ function Overseer.update(::ErrorCorrector, m::AbstractLedger)
         end
     end
     
-    @error_capturing for e in @safe_entities_in(m, SimJob && !ShouldRerun && !Done && !Submit)
-        if !any(x-> x.run, e.job.calculations) || e ∉ m[TimingInfo]
+    @error_capturing for e in @safe_entities_in(m, SimJob && !ShouldRerun && !Done)
+        if !any(x-> x.run, e.job.calculations)
             log(e, "ErrorCorrector: Nothing happened during postprocessing stage, resubmitting")
             set_flow!(e.job, "" => true)
             should_rerun(m, e, BandsResults, Results, RelaxResults, FlatBands, Completed, Pulled)

@@ -86,8 +86,12 @@ function Overseer.Entity(l::Searcher, args...)
 end
 
 function Overseer.update(l::Searcher)
-    for s in l.ledger.stages
-        update(s, l)
+    LoggingExtras.withlevel(LoggingExtras.Debug; verbosity=l.verbosity) do
+        @debugv 1 "[START] Updating" 
+        for s in l.ledger.stages
+            update(s, l)
+        end
+        @debugv 1 "[STOP] Updating"
     end
     l.timer = TimerOutputs.flatten(l.timer)
     return nothing
@@ -276,6 +280,7 @@ function load_archived!(l::Searcher)
     return l
 end
 
+### SEARCHING
 function set_searcher_stages!(l::AbstractLedger, s::Symbol)
     if s == :postprocess
         Overseer.ledger(l).stages = [core_stage()]
@@ -368,6 +373,9 @@ function setup_structure(structure_file, supercell, primitive)
             magcount += 1
         end
     end
+
+    magatsyms = map(x-> Symbol(atsyms[x]), collect(choices))
+    sort!(str.atoms, by = x -> x.name in magatsyms ? 0 : typemax(Float64)) 
 
     @info "Structure that will be used:"
     display(str)
@@ -494,14 +502,34 @@ function setup_search(name, scf_file, structure_file=scf_file;
     return l
 end
 
+"Writes out a final report to `<rootdir>/report.out` after the searcher has stopped."
 function final_report(l::Searcher)
+    structure_name = Structures.name(l[Template][1].structure)
+
+    n_trials    = 0
+    n_converged = 0
+    n_unique    = 0
+    for e in @entities_in(l, Results && (Intersection || RandomSearcher))
+        n_trials += 1
+
+        if e.converged
+            n_converged += 1
+        end
+        
+        if e in l[Unique]
+            n_unique += 1
+        end
+    end
+
+    unique_thr = round(l[Unique][1].thr, digits=2)
+    
     open(joinpath(l.rootdir, "report.out"), "w") do f
-        write(f, "Global search for system $(Structures.name(l[Template][1].structure)) finished.\n")
-        write(f, "Generations:         $(maximum(x->x.generation, l[Generation], init=0))\n")
-        write(f, "Trials:              $(length(l[Results]))\n")
-        write(f, "Converged:           $(length(filter(x->x.converged, l[Results])))\n")
-        write(f, "Unique (thr = $(round(l[Unique][1].thr, digits=2))): $(length(l[Unique])-1)\n")
-        write(f, "Unique/Trials:       $(length(l[Unique])/length(l[Results]))\n\n")
+        write(f, "Global search for system $structure_name finished.\n")
+        write(f, "Generations:         $(maximum_generation(l))\n")
+        write(f, "Trials:              $n_trials\n")
+        write(f, "Converged:           $n_converged\n")
+        write(f, "Unique (thr = $unique_thr): $n_unique\n")
+        write(f, "Unique/Trials:       $(n_unique/n_trials)\n\n")
         write_groundstate(f, l)
         plot_states(f, l)
         plot_evolution(f, l; color=false)
@@ -510,14 +538,17 @@ end
 
 function write_groundstate(io::IO, l::Searcher)
     if any(x->x.converged, l[Results])
+        verify_groundstates!(l)
+        
         groundstate = ground_state(l)
+        
         println(io, "Groundstate: ")
-        if groundstate in l[Generation]
-            println(io, "\t$(groundstate.e), Generation($(groundstate.generation))")
-        end
+        println(io, "\t$(Entity(groundstate)), Generation($(groundstate.generation))")
         println(io, "\tEnergy:  $(groundstate.total_energy) Ry")
+        
         s = groundstate[Results].state
-        println(io, "\tMagmoms: ", join(string.(round.(s.magmoms, digits=3)), " "))
+        magmoms = join(string.(round.(s.magmoms, digits=3)), " ")
+        println(io, "\tMagmoms: ", magmoms)
     else
         println(io, "No Results yet")
     end
@@ -551,7 +582,7 @@ function plot_evolution(io::IO, l::Searcher; color=true)
 end
 
 function plot_states(io::IO, l::Searcher)
-    es = filter(x -> x.converged, @entities_in(l[Results] && l[Template]))
+    es = filter(x -> x.converged, @entities_in(l, Results && Template))
     if !isempty(es)
         energies = relative_energies(es)
         magmoms  = map(x->sum(x.state.magmoms), es)
@@ -683,7 +714,13 @@ function add_search_entity!(m::AbstractLedger, search_e::Overseer.AbstractEntity
     return e
 end
 
-function set_state!(m, e, s::T) where {T}
+"""
+    set_status!(m::Searcher, e::AbstractEntity, s)
+
+Sets the status of an [`Entity`](@ref). This is used by the various systems that are part of
+the workflow to make an [`Entity`](@ref) flow through it in the correct way.
+"""
+function set_status!(m, e, s::T) where {T}
     if e ∉ m[T]
         for t in (Submit, Submitted, Running, Completed, Pulled)
             trypop!(m[t], e)
@@ -692,11 +729,11 @@ function set_state!(m, e, s::T) where {T}
     end
 end
 
-function set_state!(m, e, s::RemoteHPC.JobState)
+function set_status!(m, e, s::RemoteHPC.JobState)
     c = nothing
     if s == RemoteHPC.Submitted 
         c = Submitted()
-    elseif s == RemoteHPC.Completed
+    elseif isparseable(s)
         c = Completed()
     elseif s == RemoteHPC.Running
         c = Running()
@@ -704,10 +741,17 @@ function set_state!(m, e, s::RemoteHPC.JobState)
         c = Running()
     end
     if c !== nothing
-        set_state!(m, e, c)
+        set_status!(m, e, c)
     end
 end
 
+"""
+    should_rerun(m::Searcher, e::AbstractEntity), datatypes...)
+
+Signals that an entity should rerun. This is mainly used in self-consistent kind of calculations such as
+the `vc-relax` - `hp` loop. It will be picked up on by the [`Rerunner`](@ref) system that will
+remove the [`Entity`](@ref) from the `datatypes` components.  
+"""
 function should_rerun(m, e, datatypes...)
     rer = m[ShouldRerun]
     if e in rer
@@ -737,6 +781,11 @@ function RemoteHPC.start(l; kwargs...)
     end
 end
 
+"""
+    loop(l::Searcher; verbosity=l.verbosity, sleep_time=l.sleep_time)
+
+The main loop that executes the global searching.
+"""
 function loop(l::Searcher; verbosity=l.verbosity, sleep_time=l.sleep_time)
     l.verbosity = verbosity
     l.sleep_time = sleep_time
@@ -779,25 +828,21 @@ function loop(l::Searcher; verbosity=l.verbosity, sleep_time=l.sleep_time)
             write(http_logpath, "")
         end
         with_logger(logger) do
-            LoggingExtras.withlevel(LoggingExtras.Debug; verbosity=verbosity) do
-                if all(isalive, all_servers(l))
-                    try 
-                        @debugv 1 "[START] Updating" 
-                        RemoteHPC.@timeout 600 update(l)
-                        l.loop_error = false
-                        @debugv 1 "[STOP] Updating" 
-                    catch e
-                        RemoteHPC.log_error(e)
-                        l.loop_error = true
-                    end
+            if all(isalive, all_servers(l))
+                try 
+                    RemoteHPC.@timeout 600 update(l)
+                    l.loop_error = false
+                catch e
+                    RemoteHPC.log_error(e)
+                    l.loop_error = true
                 end
-                secs = round(Int, l.sleep_time)
-                ms = round(Int, (l.sleep_time - secs)*1000)
-                while !l.stop &&  round(now() - curt, Second) < Second(secs) + Millisecond(ms)
-                    sleep(0.5)
-                end
-                save(l)
             end
+            secs = round(Int, l.sleep_time)
+            ms = round(Int, (l.sleep_time - secs)*1000)
+            while !l.stop &&  round(now() - curt, Second) < Second(secs) + Millisecond(ms)
+                sleep(0.5)
+            end
+            save(l)
         end
     end
     @debug "Stopping loop"
@@ -808,12 +853,46 @@ function loop(l::Searcher; verbosity=l.verbosity, sleep_time=l.sleep_time)
             if state(e.job) ∈ (RemoteHPC.Pending, RemoteHPC.Submitted)
                 abort(e.job)
                 lock(lck)
-                set_state!(l, e, Submit())
+                set_status!(l, e, Submit())
                 unlock(lck)
             end
         end
     end
     l.loop = nothing
     return l.stop = false
+end
+
+"""
+    isolate_entity(l::Searcher, e::AbstractEntity, from_scratch=true)
+
+Creates a new [`Searcher`](@ref) containing only the chosen [`Entity`](@ref). 
+"""
+function isolate_entity(l::Searcher, e::AbstractEntity, from_scratch=true)
+    rootdir = l.rootdir * "_isolate_$(Entity(e).id)"
+    if ispath(rootdir)
+        rm(rootdir, recursive=true)
+    end
+    
+    out_l = Searcher(rootdir)
+    
+    set_mode!(out_l, mode(l))
+    out_l.verbosity = l.verbosity
+    out_l.sleep_time = l.sleep_time
+    
+    Entity(out_l, l[Entity(1)]...)
+    if !from_scratch
+        Entity(out_l, l[e]...)
+    else
+        new_e = Entity(out_l)
+        for c in (Template, Trial, RelaxSettings, HPSettings, ProjwfcSettings, NSCFSettings, BandsSettings, Parent, Generation)
+            if c in l[e]
+                out_l[new_e] = l[e][c]
+            end
+        end
+    end
+
+    
+    save(out_l)
+    return out_l
 end
 

@@ -1,68 +1,76 @@
 using MacroTools
 
 macro error_capturing(expr)
-    @capture(expr, for e_ in @f_(m_, indices_expr_) body_ end)
+    @capture(expr, for e_ in f__ body_ end)
+    
+    loop_expr = f[1] 
+    if loop_expr.head == :call
+        m = loop_expr.args[2]
+    elseif loop_expr.head == :macrocall
+        m = loop_expr.args[3]
+    else
+        error("Did not recognize $expr")
+    end
+
     error_comp_name = gensym("err_comp")
-    if !inexpr(indices_expr, :Error)
-        indices_expr = :($indices_expr && !Error)
+    if !inexpr(loop_expr, :Error)
+        error_expr = quote
+            if $e in $error_comp_name
+                continue
+            end
+        end
+    else
+        error_expr = ()
     end
     err_name = gensym("err")
-    if f == Symbol("@safe_entities_in")
-        return esc(quote
-            $error_comp_name = $m[Error]
-            for $e in @safe_entities_in($m, $indices_expr)
-                try
-                    $body
-                catch $err_name
-                    $error_comp_name[$e] = Error($e, $err_name, stacktrace(catch_backtrace()))
-                end
+    return esc(quote
+        $error_comp_name = $m[Error]
+        for $e in $loop_expr
+            $error_expr
+            try
+                $body
+            catch $err_name
+                $error_comp_name[$e] = Error($e, $err_name, stacktrace(catch_backtrace()))
             end
-        end)
-    else
-        return esc(quote
-            $error_comp_name = $m[Error]
-            for $e in @entities_in($m, $indices_expr)
-                try
-                    $body
-                catch $err_name
-                    $error_comp_name[$e] = Error($e, $err_name, stacktrace(catch_backtrace()))
-                end
-            end
-        end)
-    end
+        end
+    end)
 end
 
 macro error_capturing_threaded(expr)
-    @capture(expr, for e_ in @f_(m_, indices_expr_) body_ end)
+    @capture(expr, for e_ in f__ body_ end)
+    
+    loop_expr = f[1] 
+    if loop_expr.head == :call
+        m = loop_expr.args[2]
+    elseif loop_expr.head == :macrocall
+        m = loop_expr.args[3]
+    else
+        error("Did not recognize $expr")
+    end
+
     error_comp_name = gensym("err_comp")
-    if !inexpr(indices_expr, :Error)
-        indices_expr = :($indices_expr && !Error)
+    if !inexpr(loop_expr, :Error)
+        error_expr = quote
+            if $e in $error_comp_name
+                continue
+            end
+        end
+    else
+        error_expr = ()
     end
     err_name = gensym("err")
     body = MacroTools.postwalk(x-> x isa Expr && x.head in (:continue, :break) ? :(return) : x, body)
-    if f == Symbol("@safe_entities_in")
-        return esc(quote
-            $error_comp_name = $m[Error]
-            @sync for $e in @safe_entities_in($m, $indices_expr)
-                Threads.@spawn try
-                    $body
-                catch $err_name
-                    $error_comp_name[$e] = Error($e, $err_name, stacktrace(catch_backtrace()))
-                end
+    return esc(quote
+        $error_comp_name = $m[Error]
+        @sync for $e in $loop_expr
+            $error_expr
+            Threads.@spawn try
+                $body
+            catch $err_name
+                $error_comp_name[$e] = Error($e, $err_name, stacktrace(catch_backtrace()))
             end
-        end)
-    else
-        return esc(quote
-            $error_comp_name = $m[Error]
-            @sync for $e in @entities_in($m, $indices_expr)
-                Threads.@spawn try
-                        $body
-                catch $err_name
-                    $error_comp_name[$e] = Error($e, $err_name, stacktrace(catch_backtrace()))
-                end
-            end
-        end)
-    end
+        end
+    end)
 end
 
 "Calculates the order of eigenvectors of `occ1` which corresponds most to the order of eigenvectors in `occ2`."
