@@ -24,6 +24,9 @@ function plot_states(es::Vector, nat::Int, gs;
                      y_property = "energies",
                      x_property = "magmoms",
                      z_property = "band_distances",
+                     base_marker = :circle,
+                     base_markersize= 4,
+                     base_marker_strokewidth= 2,
                      p = plot(),
                      kwargs...)
     main_es = filter(x->FlatBands in x, es) 
@@ -91,13 +94,15 @@ function plot_states(es::Vector, nat::Int, gs;
             push!(properties["energies"], rel_energy ? energies[end] - e_min : energies[end])
             push!(properties["abs_magmoms"], sum(y -> abs(y), res.state.magmoms))
             push!(properties["magmoms"], sum(res.state.magmoms))
-            scatter!(p, [properties[x_property][end]], [properties[y_property][end]]; color = :red, label="vanilla QE", kwargs...)
+                    
+            scatter!(p, [properties[x_property][end]], [properties[y_property][end]];  marker=:circle, zcolor = properties[z_property][end],label="vanilla QE", kwargs...)
+            scatter!(p, [properties[x_property][end]], [properties[y_property][end]]; color = :red, marker=base_marker, markersize=base_markersize, markerstrokewidth=base_marker_strokewidth, label="vanilla QE")
         end
     end
     return p
 end
 
-function plot_states(tl::AbstractLedger; unique = false, unique_thr = 0.1, kwargs...)
+function plot_states(tl::AbstractLedger; unique = false, relaxed = false, unique_thr = 0.1, kwargs...)
     str = tl[Template][1].structure
     nat = length(str.atoms)
     
@@ -106,11 +111,18 @@ function plot_states(tl::AbstractLedger; unique = false, unique_thr = 0.1, kwarg
     else
         es = filter(x -> x.converged, collect(@entities_in(tl, Results && FlatBands && !Simulation)))
     end
+    if relaxed
+        es = filter(x -> x ∈ tl[Parent], es)
+    else
+        es = filter(x -> x ∉ tl[Parent], es)
+    end
     if !isempty(tl[BaseCase])
         base_e = tl[entity(tl[BaseCase], length(tl[BaseCase]))]
-        es = [es; base_e]
+        if base_e in tl[Results]
+            es = [es; base_e]
+        end
     end
-    gs = ground_state(tl)
+    gs = tl[ground_state(es)]
     plot_states(es, nat, gs; kwargs...)
 end
 

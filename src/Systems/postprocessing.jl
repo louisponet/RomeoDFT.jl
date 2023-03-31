@@ -1,3 +1,37 @@
+function flatbands(all_out)
+    first = all_out[:total_magnetization][end] > 0 ? :up : :down
+    second = first == :up ? :down : :up
+    bands = all_out[:bands]
+    outbands = Vector{Float64}(undef,
+                               2 * length(bands[first]) * length(bands[first][1].eigvals))
+    icur = 1
+    @inbounds for ib in 1:length(bands[:up])
+        for s in (first, second)
+            b = bands[s][ib]
+            for e in b.eigvals
+                outbands[icur] = e
+                icur += 1
+            end
+        end
+    end
+    return outbands
+end
+
+function sssp_distance(bands1, bands2, fermi)
+    function obj(Δ)
+        n = 0
+        d = 0.0
+        for (b1, b2) in zip(bands1, bands2)
+            if b1 <= fermi && b2 <= fermi
+                d += (b1 - b2 + Δ)^2
+                n += 1
+            end
+        end
+        return sqrt(d / n)
+    end
+    return optimize(x -> obj(x[1]), [0.0]).minimum
+end
+
 function process_Hubbard(hubbard, target=nothing)
     nhubbard = length(hubbard)
     states = Vector{State{Float64, DFWannier.MagneticVector{Float64, Vector{Float64}}, DFWannier.ColinMatrix{Float64, Matrix{Float64}}}}(undef, nhubbard)
@@ -55,100 +89,49 @@ function results_from_output(res::Dict, basecase=false)
         state   = State()
     end
     hub_energy     = haskey(res, :Hubbard_energy) ? res[:Hubbard_energy][end] : typemax(Float64)
-    total_energy   = haskey(res, :total_energy) ? res[:total_energy][end] : typemax(Float64)
-    accuracy   = haskey(res, :accuracy) ? res[:accuracy][end] : typemax(Float64)
-    scf_iterations = haskey(res, :scf_iteration) ? res[:scf_iteration][end] : 0
-    fermi          = haskey(res, :fermi) ? res[:fermi] : 0.0
-    converged = res[:converged]
+    total_energy   = haskey(res, :total_energy)   ? res[:total_energy][end]   : typemax(Float64)
+    accuracy       = haskey(res, :accuracy)       ? res[:accuracy][end]       : typemax(Float64)
+    scf_iterations = haskey(res, :scf_iteration)  ? res[:scf_iteration][end]  : 0
+    fermi          = haskey(res, :fermi)          ? res[:fermi]               : 0.0
+    converged      = res[:converged]
     return Results(state, minid, mindist, total_energy, hub_energy, scf_iterations,
                                        converged, fermi, accuracy)
 end
 
 function hubbard_outputdata(j; calcs = map(x->x.name, j.calculations), kwargs...)
-    parse_func(d, x, y) = d[:Hubbard_iterations] = d[:scf_iteration][end]
-    dict = Dict([n => ["Hubbard_conv true" => parse_func] for n in calcs])
-    return outputdata(j; calcs = calcs, extra_parse_funcs=dict, kwargs...)
+    hub_parse_func(d, x, y) = d[:Hubbard_iterations] = d[:scf_iteration][end]
+    
+    parse_funcs = Dict([n => ["Hubbard_conv true" => hub_parse_func] for n in calcs])
+    return outputdata(j; calcs = calcs, extra_parse_funcs=parse_funcs, kwargs...)
 end
 
 function Overseer.update(::ResultsProcessor, m::AbstractLedger)
-    @debugv 2 "[START] ResultsProcessor"
-    reslock = ReentrantLock()
-
-    if isempty(m[Unique])
-        unique_e = Entity(m, Unique())
-    else
-        unique_e = entity(m[Unique], 1)
-    end
-    unique_c = m[Unique][1]
-    base_c = m[BaseCase] 
-    @sync for e in @entities_in(m, SimJob && TimingInfo && (Trial || Template) && !Results)
-        Threads.@spawn if ispath(joinpath(e.local_dir, "scf.out"))
-            curt = now()
-            j = local_load(Job(e.local_dir))
-            o = Dict()
-            try
-                o = hubbard_outputdata(j, calcs = ["scf"]) 
-                if !isempty(o)
-                    e.job.calculations[1].run = false
-                    res = o["scf"]
-                    results = results_from_output(res, e in base_c)
-                    e.scf_time = haskey(res, :timing) ? Dates.tons(res[:timing][end].cpu) / 1000 : e.running
-                    lock(reslock)
-                    try
-                        m[e] = results
-                    catch err
-                        m[e] = Error(err, stacktrace(catch_backtrace()))
-                    finally
-                        unlock(reslock)
-                    end
-                    if haskey(res, :bands) && haskey(res, :total_magnetization)
-                        bands = flatbands(res)
-                        lock(reslock)
-                        try
-                            m[e] = FlatBands(bands)
-                        catch err
-                            m[e] = Error(err, stacktrace(catch_backtrace()))
-                        finally
-                            unlock(reslock)
-                        end
-                    end
-                    lock(reslock)
-                    try
-                        state = results.state
-                        if results.converged && !isempty(state.occupations) && e in m[FlatBands]
-                            if unique_c.bands && e in m[FlatBands]
-                                ebands = m[FlatBands][e].bands
-                                if !any(x -> x.e != e.e &&
-                                             sum(abs, m[Results][x].state.magmoms .- state.magmoms) <= unique_c.thr &&
-                                             sssp_distance(ebands, x[FlatBands].bands, results.fermi) <= unique_c.thr,
-                                         @entities_in(m, FlatBands && Unique))
-                                         
-                                    m[Unique][e] = unique_e
-                                end
-                            elseif !any(x -> e.e != x.e && Euclidean()(x.state, state) <= unique_c.thr, @entities_in(m, Results && Unique))
-                                m[Unique][e] = unique_e
-                            end
-                        end
-                        if e ∉ m[Unique] && !isempty(state.occupations)
-                            e in m[FlatBands] && e ∉ m[BaseCase] && pop!(m[FlatBands], e)
-                            m[e] = Done(false)
-                        end
-                        
-                    catch err
-                        m[e] = Error(err, stacktrace(catch_backtrace()))
-                    finally
-                        unlock(reslock)
-                    end
-                end
-                e.postprocessing += Dates.datetime2unix(now()) - Dates.datetime2unix(curt)
-            catch err
-                lock(reslock)
-                m[e] = Error(err, stacktrace(catch_backtrace()))
-                unlock(reslock)
-            end
+    @error_capturing_threaded for e in @safe_entities_in(m, Pulled && SimJob && TimingInfo)
+        if !ispath(joinpath(e.local_dir, "scf.out"))
+            continue
         end
+        
+        curt = now()
+        
+        j = local_load(Job(e.local_dir))
+        o = hubbard_outputdata(j, calcs = ["scf"])
+        
+        if !isempty(o)
+            res = o["scf"]
+            results = results_from_output(res, e in m[BaseCase])
+            
+            m[e] = results
+            
+            e.scf_time = haskey(res, :timing) ? Dates.tons(res[:timing][end].cpu) / 1000 : e.running
+            
+            if haskey(res, :bands) && haskey(res, :total_magnetization)
+                bands = flatbands(res)
+                m[e] = FlatBands(bands)
+            end
+            
+        end
+        e.postprocessing += Dates.datetime2unix(now()) - Dates.datetime2unix(curt)
     end
-    @debugv 2 "[STOP] ResultsProcessor"
 end
 
 struct BandsPlotter <: System end
@@ -162,42 +145,147 @@ Takes states newly found by the [`FireFly`](@ref) simulation that are unique and
 After this, the flies themselves are [`Archived`](@ref).
 """
 struct UniqueExplorer <: System end
-Overseer.requested_components(::UniqueExplorer) = (Archived,Intersection, NSCFSettings, ProjwfcSettings, BandsSettings)
+Overseer.requested_components(::UniqueExplorer) = (Archived, Intersection, NSCFSettings, ProjwfcSettings, BandsSettings, HPSettings, Child)
 
 function Overseer.update(::UniqueExplorer, m::AbstractLedger)
-    @debugv 2 "[START] UniqueExplorer"
-    results = m[Results]
-    generation = m[Generation]
-    simulation = m[Simulation]
-    nsettings = m[NSCFSettings]
-    curgen = maximum(x->x.generation, m[Generation], init=0)
+    if isempty(m[Unique])
+        return
+    end
     new_states = 0
-    for e in @entities_in(m, Results && SimJob && Unique)
-        postprocess = false
-        if !isempty(m[BandsSettings])
-            band_e = entity(m[BandsSettings], length(m[BandsSettings]))
-            m[BandsSettings][e] = band_e
-            postprocess = true
+    # First unique entity holds all the settings that are associated
+    # with all the states found to be unique, i.e. relaxing projwfc etc
+    unique_e = entity(m[Unique], 1)
+    unique_c = m[Unique][unique_e]
+    postprocess = any(x -> unique_e in m[x], (BandsSettings, NSCFSettings, ProjwfcSettings, RelaxSettings, HPSettings))
+    postprocess_children = any(x -> unique_e in m[x], (RelaxSettings, HPSettings)) # because structure will change
+    
+    rescomp   = m[Results]
+    bandscomp = m[FlatBands]
+
+    @error_capturing for e in @safe_entities_in(m, Pulled && Results && !Unique && !Parent && !Done && !ShouldRerun)
+
+        if !e.converged || isempty(e.state.occupations)
+            m[e] = Done(false)
+            continue
         end
-        if !isempty(m[NSCFSettings])
-            nscf_e = entity(m[NSCFSettings], length(m[NSCFSettings]))
-            m[NSCFSettings][e] = nscf_e
-            postprocess = true
+        
+        found = false
+        ebands = bandscomp[e].bands
+        @sync for e2 in @safe_entities_in(m, Unique && FlatBands && Results)
+            Threads.@spawn begin
+                found && return
+                
+                momdiffs = e2.state.magmoms .- e.state.magmoms
+                sum(abs, momdiffs) >= unique_c.thr && return
+                
+                if unique_c.bands
+                    if sssp_distance(ebands, e2[FlatBands].bands, e.fermi) >= unique_c.thr
+                        return
+                    end
+                elseif Euclidean()(e2.state, e.state) >= unique_c.thr
+                    return
+                end
+                found = true
+            end
         end
-        if !isempty(m[ProjwfcSettings])
-            projwfc_e = entity(m[ProjwfcSettings], length(m[ProjwfcSettings]))
-            m[ProjwfcSettings][e] = projwfc_e
-            postprocess = true
+        
+        if found
+            e ∉ m[BaseCase] && pop!(bandscomp, e)
+            m[e] = Done(false)
+            continue
         end
+        
+        m[Unique][e] = unique_e
+        
         if !postprocess
             m[e] = Done(false)
+            continue
         end
+        
+        if postprocess_children
+            pp_e = Entity(m, Parent(e.e), Trial(e.state, PostProcess), m[Generation][e], deepcopy(m[Template][e]))
+            m[e] = Child(Entity(pp_e))
+            m[e] = Done(false)
+        else
+            pp_e = e
+        end
+        
+        for ct in (BandsSettings, NSCFSettings, ProjwfcSettings, RelaxSettings, HPSettings) 
+            if !(pp_e in m[ct]) && unique_e in m[ct]
+                m[ct][pp_e] = unique_e
+            end
+        end
+        
         new_states += 1
     end
-    simn = simname(m)
+    
     if new_states != 0
         @debugv 1 "Found $new_states new unique states."
     end
-    @debugv 2 "[STOP] UniqueExplorer"
 end
+
+struct BandsCreator <: System end
+function Overseer.update(::BandsCreator, m::AbstractLedger)
+    @error_capturing for e in @safe_entities_in(m, SimJob && BandsSettings)
+        if any(x->x.name == "bands", e.job.calculations)
+            continue
+        end
+        suppress() do
+            add_calc!(e.job, e[BandsSettings])
+        end
+    end
+    @error_capturing for e in @safe_entities_in(m, SimJob && Pulled)
+        if !ispath(joinpath(e.local_dir, "bands.out"))
+            continue
+        end
+        if e.job.calculations[end].name == "bands"
+            m[e] = Done(false)
+        end
+    end
+end
+
+struct NSCFCreator <: System end
+
+function Overseer.update(::NSCFCreator, m::AbstractLedger)
+    # Done entities mean that stuff is fully self-consistent
+    @error_capturing for e in @safe_entities_in(m, SimJob && NSCFSettings)
+        if any(x->x.name == "nscf", e.job.calculations)
+            continue
+        end
+        suppress() do
+            add_calc!(e.job, e[NSCFSettings])
+        end
+    end
+    @error_capturing for e in @safe_entities_in(m, SimJob && Pulled)
+        if !ispath(joinpath(e.local_dir, "nscf.out"))
+            continue
+        end
+        if e.job.calculations[end].name == "nscf"
+            m[e] = Done(false)
+        end
+    end
+end
+
+struct ProjwfcCreator <: System end
+
+function Overseer.update(::ProjwfcCreator, m::AbstractLedger)
+    @error_capturing for e in @safe_entities_in(m, SimJob && ProjwfcSettings)
+        if any(x->x.name == "projwfc", e.job.calculations)
+            continue
+        end
+        suppress() do
+            add_calc!(e.job, e[ProjwfcSettings])
+        end
+    end
+    @error_capturing for e in @safe_entities_in(m, SimJob && Pulled)
+        if !ispath(joinpath(e.local_dir, "projwfc.out"))
+            continue
+        end
+        if e.job.calculations[end].name == "projwfc"
+            m[e] = Done(false)
+        end
+    end
+end
+
+
 

@@ -2,6 +2,7 @@ module RomeoDFT
 
 using Reexport
 @reexport using DFControl
+import DFControl: Calculation
 @reexport using RemoteREPL
 using RemoteHPC
 using RemoteHPC: @timeout, suppress
@@ -19,19 +20,22 @@ using SnoopPrecompile
 using ProgressMeter
 using PrettyTables
 using TOML
+using TimerOutputs
+using REPL.TerminalMenus
 
 @reexport using Overseer
+using Overseer: AbstractEntity
 
 
-const AnglesType = Angles{Float64,2,DFWannier.MagneticVector{Float64, Vector{Float64}}}
-const ColinMatrixType = DFW.ColinMatrix{Float64, Matrix{Float64}}
+const AnglesType         = Angles{Float64,2,DFWannier.MagneticVector{Float64, Vector{Float64}}}
+const ColinMatrixType    = DFW.ColinMatrix{Float64, Matrix{Float64}}
 const MagneticVectorType = DFW.MagneticVector{Float64, Vector{Float64}}
 
 const CONFIG_DIR = occursin("cache", first(Base.DEPOT_PATH)) ?
                    abspath(Base.DEPOT_PATH[2], "config", "RomeoDFT") :
                    abspath(Base.DEPOT_PATH[1], "config", "RomeoDFT")
 
-config_path(p...) = joinpath(CONFIG_DIR, p...)
+config_path(p...)   = joinpath(CONFIG_DIR, p...)
 searchers_dir(p...) = joinpath(TOML.parsefile(config_path("config.toml"))["searchers_directory"], p...)
 
 include("utils.jl")
@@ -43,18 +47,20 @@ include("jobs.jl")
 @enum TrialOrigin RandomMixed EulerAngleMixed LinearMixed PostProcess IntersectionMixed Unknown 
 @enum MixingMode RandomMixing EulerAngleMixing LinearMixing UnknownMixing
 
-include("database.jl")
-
+include("components.jl")
 include("search.jl")
 include("Systems/core.jl")
 include("Systems/postprocessing.jl")
-include("Systems/firefly.jl")
+# include("Systems/firefly.jl")
 include("Systems/intersection.jl")
 include("Systems/structural.jl")
+include("Systems/hp.jl")
+include("stages.jl")
 include("orchestrator.jl")
 include("client.jl")
 include("analysis.jl")
 include("CLI/cli.jl")
+include("logging.jl")
 
 export Searcher, connect_orchestrator
 export ground_state, unique_states

@@ -33,6 +33,9 @@ function State(occmat::Array{T, 4} where T)
     return State(filter(x->sum(x) != 0, occs))
 end
 
+Base.convert(::Type{T}, s)    where T <: State = State(s.occupations)
+Base.convert(::Type{T}, s::T) where T <: State = State(s.occupations)
+
 @inline Base.length(s::State) = length(s.occupations)
 
 @inline function (dist::Distances.Euclidean)(s1::State, s2::State)
@@ -92,7 +95,6 @@ Base.:(-)(s1::State, s2::State) = State([o1 - o2 for (o1, o2) in zip(s1.occupati
 Base.:(*)(f::Number, s1::State) = State([f * o for o in s1.occupations])  
 Base.:(*)(s1::State, f::Number) = State([f * o for o in s1.occupations])  
 Base.:(/)(s1::State, f::Number) = State([f / o for o in s1.occupations])  
-
 
 
 ## EulerAngles interface

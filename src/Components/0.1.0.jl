@@ -48,15 +48,6 @@ end
     converged::Bool
 end
 
-function Base.show(io::IO, res::Results)
-    println(io, "Results:")
-    println(io, res.state)
-    for f in fieldnames(Results)
-        f == :state && continue
-        println(io, "$f: $(getfield(res, f))")
-    end
-end
-
 @pooled_component struct ServerInfo
     server::String
     pw_exec::String
@@ -88,33 +79,17 @@ The parameters of the FireFly algorithm.
     β::Float64
 end
 
-function Base.show(io::IO, sim::Simulation)
-    println(io, "Simulation:")
-    for f in fieldnames(Simulation)
-        print(io, "\t$f: ")
-        if f == :template_structure
-            print(io, "structure with $(length(sim.template_structure.atoms)) atoms")
-        elseif f == :template_calculation
-            print(io, "calculation with ")
-            for flag in (:conv_thr, :mixing_beta, :Hubbard_mixing_beta, :Hubbard_conv_thr)
-                if haskey(sim.template_calculation, flag)
-                    print(io, "$flag=$(sim.template_calculation[flag]) ")
-                end
-            end
-        else
-            print(io, getfield(sim, f))
-        end
-        print(io, "\n")
-    end
-end
-
+# These mirror to some degree the RemoteHPC.JobState
 """
     Submit
 
 Signals whether a job should be submitted.
 """
-@component struct Submit end
-
+@component struct Submit    end
+@component struct Submitted end
+@component struct Running   end
+@component struct Completed end
+@component struct Pulled end
 
 @pooled_component Base.@kwdef mutable struct RelaxSettings
     force_convergence_threshold::Float64  = 1e-3
@@ -125,17 +100,98 @@ Signals whether a job should be submitted.
     variable_cell::Bool                   = true
 end
 
-@component struct Parent
-    parent::Entity
-end
-@component struct RelaxChild
-    child::Entity
-end
+"""
+    RelaxResults
 
+Holds the results of a relaxation.
+"""
 @component struct RelaxResults
     n_steps::Int
     total_force::Float64
     final_structure::Structure
-end    
+end
+
+"""
+    Log
+Used for storing logs to an entity.
+"""
+@component struct Log
+    logs::Vector{String}
+end
+Log() = Log(String[])
+
+function Base.show(io::IO, log::Log)
+    print(io, typeof(log), "($(length(log.logs)) logs)")
+end
+function Base.show(io::IO, ::MIME"text/plain", log::Log)
+    println(io, typeof(log), " with $(length(log.logs)) logs:")
+    for (i, l) in enumerate(log.logs)
+        println(io, "[$i] $l")
+    end
+end
+
+"""
+    ShouldRerun
+
+Signals that a job should be reran.
+`data_to_pop` denotes the [`Components`](@ref Component) that should be removed from the [`Entity`](@ref).
+"""
+@component struct ShouldRerun
+    data_to_pop::Set{DataType}
+end
+ShouldRerun(args::DataType...) = ShouldRerun(Set(args))
+Base.push!(s::ShouldRerun, d::DataType) = push!(s.data_to_pop, d)
+
+"""
+    Rerun
+
+Saves how many times a job has been reran.
+"""
+@component struct Rerun
+    count::Int
+end
+
+"""
+    HPSettings
+
+Holds the settings for a HP calculation.
+"""
+@pooled_component Base.@kwdef struct HPSettings
+    nq::NTuple{3, Int} = (2,2,2)
+    conv_thr_chi::Float64 = 1e-6
+    find_atpert::Int = 1
+    U_conv_thr::Float64 = 0.1
+end
+
+"""
+    HPResults
+
+Holds the results of a HP calculations.
+"""
+@component struct HPResults
+    U::Vector
+end
+
+"""
+    Child
+
+Signals that an [`Entity`](@ref) has a child entity, e.g. as part of postprocessing.
+"""
+@component struct Child
+    child::Entity
+end
+
+"""
+    Parent
+
+Signals that an [`Entity`](@ref) has a Parent from which it's derived.
+"""
+@component struct Parent
+    parent::Entity
+end
+
+@component struct RelaxChild
+    child::Entity
+end
 
 end

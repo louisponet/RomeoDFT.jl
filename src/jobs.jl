@@ -73,15 +73,15 @@ function set_Hubbard!(j, occ;
     else
         j[:starting_ns_eigenvalue] = occ
     end
-    j[:Hubbard_conv_thr] = conv_thr
-    j[:Hubbard_maxstep] = maxstep
-    j[:Hubbard_mixing_beta] = mix
+    j[:Hubbard_conv_thr]        = conv_thr
+    j[:Hubbard_maxstep]         = maxstep
+    j[:Hubbard_mixing_beta]     = mix
     j[:Hubbard_constraint_type] = type
-    j[:Hubbard_strength] = strength
+    j[:Hubbard_strength]        = strength
     return j
 end
 
-delete_Hubbard!(j::Job) = delete_hubbard!.(j.calculations)
+delete_Hubbard!(j::Job) = delete_Hubbard!.(j.calculations)
 function delete_Hubbard!(c)
     delete!(c, :Hubbard_mixing_beta)
     delete!(c, :Hubbard_conv_thr)

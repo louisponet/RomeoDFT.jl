@@ -50,4 +50,8 @@ function Base.convert(::Type{Results}, x::v0_2.Results)
     return Results(x.state, x.constraining_steps, x.closest_to_target, x.total_energy, x.Hubbard_energy, x.niterations, x.converged, x.fermi, x.converged ? 0.0 : typemax(Float64))
 end
 
+@component struct Bin
+    child::Entity
+end
+
 end

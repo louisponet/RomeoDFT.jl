@@ -1,101 +1,3 @@
-struct Binner{F<:Function,T} <: System
-    components::T
-    binfunc::F
-end
-
-function Overseer.update(b::Binner, m::AbstractLedger)
-    Overseer.ensure_component!(m, Bin)
-    comps = map(c -> m[c], b.components)
-    for e in @entities_in(comps[1])
-        if length(comps) < 2 || all(x -> e in x, comps[2:end])
-            binned = false
-            for bin in m[Bin]
-                if any(x -> b.binfunc(map(c -> c[x], comps)..., map(c -> c[e], comps)...),
-                       bin.entities)
-                    push!(bin.entities, e.e)
-                    binned = true
-                    break
-                end
-            end
-            if !binned
-                Entity(m, Bin([e]))
-            end
-        end
-    end
-end
-
-function flatbands(all_out)
-    first = all_out[:total_magnetization][end] > 0 ? :up : :down
-    second = first == :up ? :down : :up
-    bands = all_out[:bands]
-    outbands = Vector{Float64}(undef,
-                               2 * length(bands[first]) * length(bands[first][1].eigvals))
-    icur = 1
-    @inbounds for ib in 1:length(bands[:up])
-        for s in (first, second)
-            b = bands[s][ib]
-            for e in b.eigvals
-                outbands[icur] = e
-                icur += 1
-            end
-        end
-    end
-    return outbands
-end
-
-function add_bands!(l)
-    Overseer.ensure_component!(l, FlatBands)
-    sj = l[SimJob]
-    for e in @entities_in(l[SimJob])
-        tp = joinpath(e.local_dir, "scf.out")
-        if ispath(tp)
-            l[FlatBands][e] = FlatBands(Float64[])
-        end
-    end
-    @sync for e in @entities_in(l, SimJob && FlatBands)
-        Threads.@spawn try
-            o = DFC.FileIO.qe_parse_pw_output(joinpath(e.local_dir, "scf.out"))
-            e.bands = flatbands(o)
-        catch
-            @warn "Something went wrong for $(e.e)"
-        end
-    end
-end
-
-function sssp_distance(bands1, bands2, fermi)
-    function obj(Δ)
-        n = 0
-        d = 0.0
-        for (b1, b2) in zip(bands1, bands2)
-            if b1 <= fermi && b2 <= fermi
-                d += (b1 - b2 + Δ)^2
-                n += 1
-            end
-        end
-        return sqrt(d / n)
-    end
-    return optimize(x -> obj(x[1]), [0.0]).minimum
-end
-
-"Calculates the order of eigenvectors of `occ1` which corresponds most to the order of eigenvectors in `occ2`."
-function eigvec_order(occ1, occ2)
-    eigvals1, eigvecs1 = eigen(occ1)
-    eigvals2, eigvecs2 = eigen(occ2)
-    dim = size(eigvecs1, 1)
-    order = zeros(Int, dim)
-    for c1 in 1:dim
-        best = 0.0
-        for c2 in 1:dim
-            t = abs(dot(eigvecs1[:, c1], eigvecs2[:, c2]))
-            if t > best && !(c2 in order)
-                best = t
-                order[c1] = c2
-            end
-        end
-    end
-    return (; eigvals1, eigvals2, eigvecs1, eigvecs2, order)
-end
-
 """
 write_xsf(filename::String, wfc::Wfc3D{T}) where T<:AbstractFloat
 Writes the real part of the Wfc3D to a .xsf file that is readable by XCrysden or VESTA.
@@ -179,3 +81,48 @@ function DFControl.bandgap(e::Overseer.EntityState)
     @assert Results in e  ArgumentError("No Results in Entity")
     return bandgap(e[FlatBands], e.fermi)
 end
+
+function ground_state(es; by=x->x.total_energy)
+    min_entity = Entity(0)
+    min_energy = typemax(Float64)
+    for e in es
+        if e.converged
+            test = by(e)
+            if test < min_energy
+                min_energy = test
+                min_entity = e.e
+            end
+        end
+    end
+    return min_entity
+end
+
+function ground_state(l::AbstractLedger; kwargs...)
+    return l[ground_state(@entities_in(l, Results && FlatBands); kwargs...)]
+end
+
+function unique_states(es; thr = 1e-4, bands = true)
+    iu = ones(length(es))
+    @inbounds for i in 1:length(es)-1
+        e1 = es[i]
+        if iu[i] == 1
+            Threads.@threads for j in i+1:length(es)
+                if iu[j] == 1
+                    e2 = es[j]
+                    dist = bands ? sssp_distance(e1.bands, e2.bands, e1.fermi) :
+                           Euclidean()(e1.state, e2.state)
+                    if dist < thr
+                        iu[j] = 0
+                    end
+                end
+            end
+        end
+    end
+    return es[findall(isequal(1), iu)]
+end
+
+function unique_states(l::AbstractLedger; kwargs...)
+    return unique_states(filter(x -> x.converged,
+                                  @entities_in(l[Results] && l[FlatBands])); kwargs...)
+end
+

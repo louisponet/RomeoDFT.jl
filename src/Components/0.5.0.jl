@@ -1,7 +1,7 @@
 module v0_5
 using ..Overseer
 using ..v0_4
-using ..RomeoDFT: State, Unknown, TrialOrigin, MixingMode, UnknownMixing, Structure, Calculation, DFWannier
+using ..RomeoDFT: State, Unknown, TrialOrigin, MixingMode, UnknownMixing, Structure, Calculation, DFWannier, PostProcessSettings
 using ..DFControl: Projection
 using ..Structures
 using ..Calculations
@@ -136,7 +136,7 @@ end
 
 Component that holds the settings to generate the bands calculation input and eventual band plot.
 """
-@pooled_component Base.@kwdef mutable struct BandsSettings
+@pooled_component Base.@kwdef mutable struct BandsSettings <: PostProcessSettings
     kpoints::Union{Vector{NTuple{4,Float64}},Int} = 20
     ymin::Float64 = -5.0
     ymax::Float64 = 5.0
@@ -144,25 +144,13 @@ end
 Base.convert(::Type{BandsSettings}, x::v0_4.BandsSettings) =
     BandsSettings(x.kpoints, x.ymin, x.ymax)
     
-function gencalc(job, settings::BandsSettings)
-    if settings.kpoints isa Int
-        kpath = filter(x -> all(y -> y in (1 / 3, 0.5, 0.0), x[1:3]),
-                       Structures.high_symmetry_kpath(job.structure,
-                                                      settings.kpoints))
-        kpath[end] = (kpath[end][1:3]..., 1.0)
-        return Calculations.gencalc_bands(job["scf"], kpath)
-    else
-        return Calculations.gencalc_bands(job["scf"], kpoints)
-    end
-end
-
 
 """
     WannierSettings
 
 Component that holds settings for the wannier calculation.
 """
-@pooled_component Base.@kwdef mutable struct WannierSettings
+@pooled_component Base.@kwdef mutable struct WannierSettings <: PostProcessSettings
     plot_wannier::Bool = false
     projections::Dict{Symbol,Vector{Projection}}
     dos_ratio::Float64 = 0.2
@@ -170,21 +158,13 @@ end
 Base.convert(::Type{WannierSettings}, x::v0_4.WannierSettings) =
     WannierSettings(x.plot_wannier, x.projections, x.dos_ratio)
     
-function gencalc(job, wsettings::WannierSettings)
-    for (elsym, projs) in wsettings.projections
-        for a in job.structure[elsym]
-            a.projections = projs
-        end
-    end
-    return Calculations.gencalc_wan(job, wsettings.dos_ratio; plot_wannier = wsettings.plot_wannier)
-end 
     
 """
     ProjwfcSettings
 
 Component that holds settings for the projwfc calculation.
 """
-@pooled_component Base.@kwdef mutable struct ProjwfcSettings
+@pooled_component Base.@kwdef mutable struct ProjwfcSettings <: PostProcessSettings
     Emin::Float64 = 20
     Emax::Float64 = 10
     deltaE::Float64 = 0.1
@@ -192,21 +172,16 @@ Component that holds settings for the projwfc calculation.
 end
 Base.convert(::Type{ProjwfcSettings}, x::v0_4.ProjwfcSettings) =
     ProjwfcSettings(x.Emin, x.Emax, x.deltaE, x.dos_ratio)
-gencalc(job, settings::ProjwfcSettings) = 
-    Calculations.gencalc_projwfc(job[1], settings.Emin, settings.Emax, settings.deltaE)
- 
+
 """
     NSCFSettings
 
 Component that holds settings for the NSCF calculation.
 """
-@pooled_component Base.@kwdef mutable struct NSCFSettings
+@pooled_component Base.@kwdef mutable struct NSCFSettings <: PostProcessSettings
     kpoints::NTuple{3,Int} = (6, 6, 6)
 end
 Base.convert(::Type{NSCFSettings}, x::v0_4.NSCFSettings) =
     NSCFSettings(x.kpoints)
-gencalc(job, settings::NSCFSettings) = 
-    Calculations.gencalc_nscf(job[1], settings.kpoints)
-
 
 end

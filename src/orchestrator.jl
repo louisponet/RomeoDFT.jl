@@ -89,11 +89,12 @@ end
 
 function load_searcher(f::Function, n::AbstractString)
     o = ORCHESTRATOR[]
+    Main.Revise.revise()
     if haskey(o.searchers, n)
-        f(o.searchers[n])
+        Base.invokelatest(f, o.searchers[n])
     else
         l = load(Searcher(n))
-        f(l)
+        Base.invokelatest(f, l)
         save(l)
     end
 end
@@ -127,7 +128,7 @@ function status()
             end
         end
         data[i, 4] = string(length(l[Unique])-1)
-        data[i, 5] = string(length(@entities_in(l, Results)))
+        data[i, 5] = string(length(@entities_in(l, Results && !Parent)))
     end
 
     maxlen = displaysize(stdout)[2]

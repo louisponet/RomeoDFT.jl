@@ -24,8 +24,10 @@ function start_orchestrator()
     try
         orchestrator_eval("loaded_searchers()")
     catch
-        t = mtime(config_path("log.log")) 
-        r = run(Cmd(Cmd(["julia", "--project=$(config_path())", "--startup-file=no", "-e",  "using Revise; using Plots; using LaTeXStrings; using UnicodePlots; using RomeoDFT; RomeoDFT.run_orchestrator()", "&>", config_path("log.log")]), detach=true, ignorestatus=true), wait=false)
+        t = mtime(config_path("log.log"))
+        julia_cmd = VERSION.minor >= 9 ? [joinpath(Sys.BINDIR, "julia"), "--heap-size-hint=2.5G"] : [joinpath(Sys.BINDIR, "julia")]
+        
+        r = run(Cmd(Cmd([julia_cmd..., "--project=$(config_path())", "--startup-file=no","-t", "auto", "-e",  "using Revise; using Plots; using LaTeXStrings; using UnicodePlots; using RomeoDFT; RomeoDFT.run_orchestrator()", "&>", config_path("log.log")]), detach=true, ignorestatus=true), wait=false)
         p = ProgressMeter.ProgressUnknown("Starting orchestrator. This takes a while the first time..."; spinner=true)
 
         while process_running(r) && mtime(config_path("log.log")) == t
@@ -53,3 +55,6 @@ function client_stop_orchestrator()
     end
 end
 
+function orchestrator_submit(l; verbosity=0)
+    orchestrator_eval("start_searcher(\"$(l.rootdir)\"; verbosity=$(verbosity), sleep_time=Int($(l.sleep_time)))")
+end
