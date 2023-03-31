@@ -108,4 +108,8 @@ end
 
 dft_energy(res::Results) = res.total_energy - res.Hubbard_energy
 
-trypop!(c::Overseer.AbstractComponent, e::AbstractEntity) = e in c && pop!(c, e)
+function trypop!(c::Overseer.AbstractComponent, e::AbstractEntity)
+    if e in c
+        pop!(c, e)
+    end
+end

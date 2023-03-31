@@ -84,6 +84,8 @@ function setup_scf_for_hp!(m, e, o, insulating_from_hp=false)
             scf_calc[:tot_magnetization] = round(Int, totmag)
             scf_calc[:occupations] = "fixed"
             scf_calc[:nbnd] = n_ks
+            scf_calc[:startingpot] = "file"
+            scf_calc[:startingwfc] = "file"
             delete!(scf_calc, :degauss)
             delete!(scf_calc, :smearing)
         end
@@ -100,7 +102,6 @@ function setup_scf_for_hp!(m, e, o, insulating_from_hp=false)
 end
 
 function Overseer.update(::HPProcessor, m::AbstractLedger)
-    #TODO: For now not self-consistent
     @error_capturing for e in @safe_entities_in(m, Pulled && SimJob && HPSettings && !ShouldRerun)
         if !ispath(joinpath(e.local_dir, "hp.out"))
             continue
@@ -165,7 +166,15 @@ function Overseer.update(::HPProcessor, m::AbstractLedger)
             
             if diff > e.U_conv_thr
                 log(e, "HP U diff with original structure: $diff, rerunning with updated U.")
-                should_rerun(m, e, SimJob)                
+                
+                files = readdir(joinpath(e.local_dir))
+                for f in files
+                    if occursin("Hubbard_parameters", f)
+                        rm(joinpath(e.local_dir, f))
+                    end
+                end
+                should_rerun(m, e, SimJob)
+                
             else
                 if e.job.calculations[end].name == "hp"
                     m[e] = Done(false)

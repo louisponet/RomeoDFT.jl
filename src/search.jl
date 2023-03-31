@@ -155,6 +155,7 @@ function RemoteHPC.save(rootdir::String, l::Searcher)
         f["entities"] = entities(l)
         f["free_entities"] = Overseer.free_entities(l)
     end
+    return joinpath(rootdir, "ledger.jld2")
 end
 
 function RemoteHPC.load(l::Searcher; version = nothing)
@@ -214,8 +215,8 @@ function RemoteHPC.load(rootdir::String, l::AbstractLedger)
                 c = f["components"][cname]
                 compdict[eltype(c)] = c
             end
-            l.ledger.entities = f["entities"]
-            l.ledger.free_entities = f["free_entities"]
+            l.ledger.entities = get(f, "entities", l.ledger.entities)
+            l.ledger.free_entities = get(f, "free_entities", l.ledger.free_entities)
             return compdict
         else
             tl = f["ledger"]
@@ -258,6 +259,13 @@ function RemoteHPC.load(rootdir::String, l::AbstractLedger)
     
     set_searcher_stages!(l, l.mode)
     Overseer.ensure_component!(l, Log)
+
+    for e in valid_entities(l)
+        if e ∉ l.ledger[Log]
+            l.ledger[Log][e] = Log()
+        end
+    end
+    
     return l
 end
 
@@ -281,19 +289,6 @@ function load_archived!(l::Searcher)
 end
 
 ### SEARCHING
-function set_searcher_stages!(l::AbstractLedger, s::Symbol)
-    if s == :postprocess
-        Overseer.ledger(l).stages = [core_stage()]
-    elseif s == :search
-        Overseer.ledger(l).stages = search_stages()
-    elseif s == :cleanup
-        Overseer.ledger(l).stages = [cleanup_stage()]
-    else
-        error("Searcher stage $s not recognized...")
-    end
-    prepare(l)
-end
-
 function set_mode!(l::Searcher, mode::Symbol)
     set_searcher_stages!(l.ledger, mode)
     l.mode = mode
@@ -346,19 +341,19 @@ function setup_structure(structure_file, supercell, primitive)
     end
 
     
-    local_server = Server(gethostname())
-    pseudosets = load(local_server, PseudoSet(""))
+    loc_server = local_server()
+    pseudosets = load(loc_server, PseudoSet(""))
     while isempty(pseudosets)
-        @info "No PseudoSets found on Server $(local_server.name), please configure one now..."
+        @info "No PseudoSets found on Server $(loc_server.name), please configure one now..."
         RemoteHPC.configure()
-        pseudosets = load(local_server, PseudoSet(""))
+        pseudosets = load(loc_server, PseudoSet(""))
     end
     pseudo_choice = request("Select pseudoset:", RadioMenu(pseudosets))
     if pseudo_choice < 0
         return
     end
 
-    set_pseudos!(str, load(local_server, PseudoSet(pseudosets[pseudo_choice])))
+    set_pseudos!(str, load(loc_server, PseudoSet(pseudosets[pseudo_choice])))
 
     atsyms = unique(map(x -> string(x.name), str.atoms))
     choices = request("Select magnetic elements:", MultiSelectMenu(atsyms))
@@ -771,6 +766,7 @@ function stop(l::Searcher)
             sleep(0.1)
         end
     end
+    l.stop=false
 end
  
 function RemoteHPC.start(l; kwargs...)

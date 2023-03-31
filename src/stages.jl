@@ -34,4 +34,18 @@ intersection_stage() = Stage(:intersection, [Intersector(), RandomTrialGenerator
     
 # firefly_stage() = Stage(:firefly, [FireFly(), PostFireflyExplorer(), Archiver()])
 
-search_stages() = [Stage(:main, [intersection_stage(), core_stage()])]
+search_stage() = Stage(:main, [intersection_stage(), core_stage()])
+
+function set_searcher_stages!(l::AbstractLedger, s::Symbol)
+    if s ∈ (:postprocess, :manual)
+        Overseer.ledger(l).stages = [core_stage()]
+    elseif s == :search
+        Overseer.ledger(l).stages = [search_stage()]
+    elseif s == :cleanup
+        Overseer.ledger(l).stages = [cleanup_stage()]
+    else
+        error("Searcher stage $s not recognized...")
+    end
+    prepare(l)
+end
+

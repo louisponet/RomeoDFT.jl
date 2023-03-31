@@ -128,7 +128,7 @@ function status()
             end
         end
         data[i, 4] = string(length(l[Unique])-1)
-        data[i, 5] = string(length(@entities_in(l, Results && !Parent && !NSCFSettings && !BandsSettings && !ProjwfcSettings)))
+        data[i, 5] = string(length(@entities_in(l, Results && !Parent)))
     end
 
     maxlen = displaysize(stdout)[2]

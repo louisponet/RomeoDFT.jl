@@ -10,7 +10,7 @@ function Overseer.requested_components(::JobCreator)
     return (SimJob, Submit, Template, SCFSettings, NSCFSettings, BandsSettings,
             BandsResults, Hybrid,
             ProjwfcSettings, Simulation, Trial, Generation, Results, WannierResults,
-            WannierSettings, TimingInfo, BaseCase)
+            WannierSettings, TimingInfo, BaseCase, Submitted, Completed, Running)
 end
 
 function Overseer.update(::JobCreator, m::AbstractLedger)
@@ -300,6 +300,16 @@ function Overseer.update(::Cleaner, m::AbstractLedger)
         end
         e[Done] = Done(true)
     end
+    
+    @error_capturing_threaded for e in @safe_entities_in(m, SimJob && Error)
+        s = Server(e.job.server)
+        
+        opath = joinpath(e.remote_dir, "outputs")
+        if ispath(s, opath)
+            log(e, "Cleaning $opath on Server $(s.name)")
+            rm(s, opath)
+        end
+    end
 end
 
 
@@ -368,15 +378,24 @@ struct Rerunner <: System end
 Overseer.requested_components(::Rerunner) = (ShouldRerun, Rerun)
 
 function Overseer.update(::Rerunner, m::AbstractLedger)
-    @error_capturing for e in @safe_entities_in(m, ShouldRerun)
+    @error_capturing_threaded for e in @safe_entities_in(m, ShouldRerun)
         
         from_scratch = false
         for d in e.data_to_pop
-            trypop!(m[d], e)
+            dat = trypop!(m[d], e)
+            
             if d == SimJob
+                if dat !== nothing
+                    server = Server(dat.job.server)
+                    if isalive(server) && ispath(server, dat.remote_dir)
+                        rm(server, dat.remote_dir)
+                    end
+                end
+                
                 trypop!(m[ServerInfo], e)
                 trypop!(m[Unique], e)
                 from_scratch = true
+                
             end
         end
         if !from_scratch
@@ -416,13 +435,13 @@ function Overseer.update(::ErrorCorrector, m::AbstractLedger)
         end
     end
     
-    @error_capturing for e in @safe_entities_in(m, SimJob && !ShouldRerun && !Done)
-        if !any(x-> x.run, e.job.calculations)
-            log(e, "ErrorCorrector: Nothing happened during postprocessing stage, resubmitting")
-            set_flow!(e.job, "" => true)
-            should_rerun(m, e, BandsResults, Results, RelaxResults, FlatBands, Completed, Pulled)
-        end
-    end
+    # @error_capturing for e in @safe_entities_in(m, SimJob && !ShouldRerun && !Done)
+    #     if !any(x-> x.run, e.job.calculations)
+    #         log(e, "ErrorCorrector: Nothing happened during postprocessing stage, resubmitting")
+    #         set_flow!(e.job, "" => true)
+    #         should_rerun(m, e, BandsResults, Results, RelaxResults, FlatBands, Completed, Pulled)
+    #     end
+    # end
 
     for e in @safe_entities_in(m, Done && Error)
         if occursin("HTTP.Exceptions.StatusError(500, \"POST\", \"/rm/?", string(e.err))
@@ -474,6 +493,7 @@ stop_check(m::AbstractLedger) = stop_check(maximum(x->x.generation, m[Generation
 
 # Check if BaseCase was ran with the magnetizations of the minimum state
 function check_basecase!(m::AbstractLedger)
+    
     base_e = entity(m[BaseCase], length(m[BaseCase]))
     base_str    = m[Template][base_e].structure
 
@@ -482,6 +502,10 @@ function check_basecase!(m::AbstractLedger)
     basecase_magmoms = map(x -> x.magnetization[3], magats)
     
     unique_es = collect(@entities_in(m, Unique && Results))
+
+    if isempty(unique_es)
+        return true
+    end
     
     minid = findmin(x -> x.total_energy, unique_es)[2]
 
@@ -544,6 +568,9 @@ function Overseer.update(::Stopper, m::AbstractLedger)
             m.stop     = true
             m.finished = true
         end
+        return
+    end
+    if m.mode == :manual
         return
     end
 

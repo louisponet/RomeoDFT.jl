@@ -198,8 +198,8 @@ module searcher
                           hp_nq1::Int = 2,
                           hp_nq2::Int = 2,
                           hp_nq3::Int = 2,
-                          hp_conv_thr_chi::Float64 = 1e-4,
-                          hp_find_atpert::Int = 2,
+                          hp_conv_thr_chi::Float64 = 1e-6,
+                          hp_find_atpert::Int = 1,
                           hp_U_conv_thr::Float64 = 0.1)
                           
         l = setup_search(name, abspath(scf_file.content), abspath(structure_file.content);

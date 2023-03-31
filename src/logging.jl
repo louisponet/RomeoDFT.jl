@@ -113,5 +113,6 @@ function log(e::Overseer.EntityState, msg::String)
     @debugv 1 begin
         "$(e.e) -- $msg"
     end
-    push!(e.components[1].lc[e.e].logs, "$(now()) -- $msg")
+    logc = e.components[1].lc
+    push!(logc[e.e].logs, "$(now()) -- $msg")
 end

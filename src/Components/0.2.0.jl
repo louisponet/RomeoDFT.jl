@@ -147,4 +147,19 @@ end
     replacement_flags::Dict
 end
 
+"""
+    RelaxResults
+
+Holds the results of a relaxation.
+"""
+@component struct RelaxResults
+    n_steps::Int
+    total_force::Float64
+    final_structure::Structure
+    diff::Float64
+end
+
+Base.convert(::Type{RelaxResults}, x::v0_1.RelaxResults) = RelaxResults(x.n_steps, x.total_force, x.final_structure, 0.0)
+
+
 end
