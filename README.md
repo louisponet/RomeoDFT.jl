@@ -1,6 +1,7 @@
 # RomeoDFT
-[![](https://img.shields.io/badge/docs-stable-blue.svg)](https://louisponet.github.io/RomeoDFT.jl/stable)
+[![Build Status](https://github.com/louisponet/RomeoDFT.jl/workflows/CI/badge.svg)](https://github.com/louisponet/RomeoDFT.jl/actions?query=workflow%3ACI)
 [![](https://img.shields.io/badge/docs-latest-blue.svg)](https://louisponet.github.io/RomeoDFT.jl/dev)
+[![](https://img.shields.io/badge/docs-stable-blue.svg)](https://louisponet.github.io/RomeoDFT.jl/stable)
 
 Software package to perform **R**obust **O**ccupation **M**atrix **E**nergy **O**ptimization using DFT.
 At this moment it is based on the implementation of occupation matrix constraining in [a patched version of Quantum Espresso](https://gitlab.com/louisponet/q-e/-/tree/broyden_constraints).
