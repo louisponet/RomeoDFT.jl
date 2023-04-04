@@ -148,7 +148,7 @@ module searcher
     - `--Hubbard-maxstep=<100>`: maximum constraining steps
     - `--Hubbard-mixing-beta=<0.4>`: mixing used to update the constraints during scf iterations
     - `--Hubbard-strength=<1.0>`: strength of the constraining potential
-    - `--Hubbard-conv-thr=<0.1>`: threshold euclidean distance between trial and current occupation matrices after which the constraints are released
+    - `--Hubbard-conv-thr=<0.1>`: threshold euclidean distance per atom between trial and current occupation matrices after which the constraints are released
     - `--electron-maxstep=<500>`: see QE documentation
     - `--relax-unique=<false>`: whether a structural relaxation should be ran on each unique state
     - `--relax-base=<false>`: whether a relaxation should be ran so the search happens for the relaxed structure

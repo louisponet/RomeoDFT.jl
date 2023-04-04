@@ -95,7 +95,7 @@ function plot_states(es::Vector, nat::Int, gs;
             push!(properties["abs_magmoms"], sum(y -> abs(y), res.state.magmoms))
             push!(properties["magmoms"], sum(res.state.magmoms))
                     
-            scatter!(p, [properties[x_property][end]], [properties[y_property][end]];  marker=:circle, zcolor = properties[z_property][end],label="vanilla QE", kwargs...)
+            scatter!(p, [properties[x_property][end]], [properties[y_property][end]];  marker=:circle, zcolor = properties[z_property][end],label="", kwargs...)
             scatter!(p, [properties[x_property][end]], [properties[y_property][end]]; color = :red, marker=base_marker, markersize=base_markersize, markerstrokewidth=base_marker_strokewidth, label="vanilla QE")
         end
     end

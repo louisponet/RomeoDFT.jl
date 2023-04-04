@@ -453,7 +453,12 @@ function setup_search(name, scf_file, structure_file=scf_file;
     end
 
     calc = setup_scf(scf_file, supercell; kwargs...)
-    str = setup_structure(structure_file, supercell, primitive) 
+    str = setup_structure(structure_file, supercell, primitive)
+
+    magats = filter(ismagnetic, str.atoms)
+    suppress() do
+        calc[:system][:Hubbard_conv_thr] *= length(magats)
+    end
 
     l = Searcher(; rootdir = dir, sleep_time = sleep_time)
 
@@ -892,3 +897,21 @@ function isolate_entity(l::Searcher, e::AbstractEntity, from_scratch=true)
     return out_l
 end
 
+function create_postprocess_child!(l, parent_entity, components...)
+    
+    gen = parent_entity in l[Generation] ? l[Generation][parent_entity] : Generation(maximum_generation(l))
+    
+    ppe = Entity(l, Parent(Entity(parent_entity)), Trial(l[Results][parent_entity].state, PostProcess), gen, deepcopy(l[Template][parent_entity]))
+    l[parent_entity] = Child(Entity(ppe))
+
+    unique_e = l[entity(l[Unique], 1)]
+    for c in components
+        CT = typeof(c)
+        if CT in unique_e && l[CT][unique_e] == c
+            l[CT][ppe] = unique_e
+        else
+            l[ppe]= c
+        end
+    end
+    return ppe
+end

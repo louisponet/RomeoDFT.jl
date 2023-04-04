@@ -238,7 +238,9 @@ function Overseer.update(::FireFly, m::AbstractLedger)
                 if BaseCase in m
                     base_e = entity(m[BaseCase], 1)
                     str = m[Template][base_e].structure
+                    
                     magats = filter(x -> sum(x.magnetization) != 0 && x.dftu.U != 0, str.atoms)
+                    
                     curmags = map(x -> x.magnetization[3], magats)
                     magnetizations = map(x -> abs(x) < 1e-2 ? 1e-5 : sign(x), conv_flies[id][Results].state.magmoms)[1:length(magats)]
                     

@@ -203,8 +203,8 @@ function Overseer.update(::UniqueExplorer, m::AbstractLedger)
         end
         
         if postprocess_children
-            pp_e = Entity(m, Parent(e.e), Trial(e.state, PostProcess), m[Generation][e], deepcopy(m[Template][e]))
-            m[e] = Child(Entity(pp_e))
+            
+            pp_e = create_postprocess_child!(m, e)
             m[e] = Done(false)
         else
             pp_e = e
@@ -223,6 +223,7 @@ function Overseer.update(::UniqueExplorer, m::AbstractLedger)
         @debugv 1 "Found $new_states new unique states."
     end
 end
+
 
 struct BandsCreator <: System end
 function Overseer.update(::BandsCreator, m::AbstractLedger)

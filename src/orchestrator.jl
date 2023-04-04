@@ -117,15 +117,7 @@ function status()
         elseif l.loop === nothing || istaskdone(l.loop)
             data[i, 3] = l.finished ? "FINISHED" : "STOPPED"
         else
-            if l.mode == :postprocess
-                data[i, 3] = "POSTPROCESSING"
-            elseif l.mode == :search
-                data[i, 3] = "SEARCHING"
-            elseif l.mode == :cleanup
-                data[i, 3] = "CLEANUP"
-            else
-                data[i, 3] = "UNKNOWN"
-            end
+            data[i, 3] = uppercase(string(l.mode))
         end
         data[i, 4] = string(length(l[Unique])-1)
         data[i, 5] = string(length(@entities_in(l, Results && !Parent)))
