@@ -1,6 +1,6 @@
-site_name:        Occupations.jl
-repo_url:         https://github.com/louisponet/Occupations.jl
-site_description: Package for interaction with DFT related software
+site_name:        RomeoDFT.jl
+repo_url:         https://github.com/louisponet/RomeoDFT.jl
+site_description: Robust Occupation Matrix Energy Optimizer for DFT
 site_author:      Louis Ponet
 
 theme: readthedocs
