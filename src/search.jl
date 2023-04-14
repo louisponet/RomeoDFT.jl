@@ -105,7 +105,9 @@ function Overseer.update(stage::Stage, l::Searcher)
             Threads.@threads for t in step
                 if t isa System
                     to = TimerOutput()
+                    @debugv 3 "[START] $t"
                     @timeit to "$(typeof(t))" update(t, l)
+                    @debugv 3 "[STOP] $t"
                     merge!(l.timer, to)
                 else
                     update(t, l)
@@ -114,7 +116,9 @@ function Overseer.update(stage::Stage, l::Searcher)
         else
             if step isa System
                 to = TimerOutput()
+                @debugv 3 "[START] $step"
                 @timeit to "$(typeof(step))" update(step, l)
+                @debugv 3 "[STOP] $step"
                 merge!(l.timer, to)
             else
                 update(step, l)
@@ -464,7 +468,6 @@ function setup_search(name, scf_file, structure_file=scf_file;
 
     sim_e = Entity(l, setup_ServerInfo(),RandomSearcher(nflies),
                            Template(deepcopy(str), deepcopy(calc)),
-                           Unique(unique_thr, true),
                            IntersectionSearcher(mindist, 100),
                            StopCondition(stopping_unique_ratio, stopping_n_generations),
                            Generation(1))
@@ -474,9 +477,11 @@ function setup_search(name, scf_file, structure_file=scf_file;
                        deepcopy(calc)),
                        Generation(1))
                        
+    unique_e = Entity(l, Unique(unique_thr, true), Generation(1))
+    
     relset = RelaxSettings(force_convergence_threshold, energy_convergence_threshold, ion_dynamics, cell_dynamics, symmetry, variable_cell)
     if relax_unique
-        l[sim_e] = relset
+        l[unique_e] = relset
     end
     if relax_base
         l[base_e] = relset
@@ -484,7 +489,7 @@ function setup_search(name, scf_file, structure_file=scf_file;
 
     hpset = HPSettings(hp_nq, hp_conv_thr_chi, hp_find_atpert, hp_U_conv_thr)
     if hp_unique
-        l[sim_e] = hpset
+        l[unique_e] = hpset
     end
     if hp_base
         l[base_e] = hpset
@@ -897,21 +902,54 @@ function isolate_entity(l::Searcher, e::AbstractEntity, from_scratch=true)
     return out_l
 end
 
-function create_postprocess_child!(l, parent_entity, components...)
-    
+"""
+    create_child!(l::AbstractLedger, parent_entity, components...)
+
+Creates a child from the `parent_entity`, using its [`Generation`](@ref), the state in its [`Results`](@ref) for [`Trail`](@ref), its [`Template`](@ref),
+and any other `Component` in `components`.
+"""
+function create_child!(l::AbstractLedger, parent_entity, components...)
     gen = parent_entity in l[Generation] ? l[Generation][parent_entity] : Generation(maximum_generation(l))
     
-    ppe = Entity(l, Parent(Entity(parent_entity)), Trial(l[Results][parent_entity].state, PostProcess), gen, deepcopy(l[Template][parent_entity]))
+    ppe = Entity(l, Parent(Entity(parent_entity)), Trial(l[Results][parent_entity].state, PostProcess), gen, deepcopy(l[Template][parent_entity]), components...)
     l[parent_entity] = Child(Entity(ppe))
+    return ppe
+end
 
+"""
+    create_postprocess_child!(l::AbstractLedger, parent_entity, components...)
+
+First calls [`create_child`](@ref), then will look at the components held by the [`Unique`](@ref) entity to decide what other postprocessing components should be added."""
+function create_postprocess_child!(l, parent_entity, comps...)
+    
+    ppe = create_child!(l, parent_entity, comps...)
     unique_e = l[entity(l[Unique], 1)]
-    for c in components
-        CT = typeof(c)
-        if CT in unique_e && l[CT][unique_e] == c
-            l[CT][ppe] = unique_e
-        else
-            l[ppe]= c
+    
+    for c in components(unique_e)
+        if c isa PooledComponent && eltype(c) != Unique
+            c[ppe] = unique_e
         end
     end
     return ppe
+end
+
+function all_children_done(l, parent)
+    child_comp = l[Child]
+    done_comp = l[Done]
+    
+    while parent ∈ child_comp
+        parent = child_comp[parent].child
+        if parent ∉ done_comp
+            return false
+        end
+    end
+    return true
+end
+
+function oldest_parent(l, e)
+    parent_comp = l[Parent]
+    while e ∈ parent_comp
+        e = parent_comp[e].parent
+    end
+    return e
 end

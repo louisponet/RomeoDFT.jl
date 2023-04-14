@@ -125,8 +125,30 @@ function Overseer.update(::ResultsProcessor, m::AbstractLedger)
             e.scf_time = haskey(res, :timing) ? Dates.tons(res[:timing][end].cpu) / 1000 : e.running
             
             if haskey(res, :bands) && haskey(res, :total_magnetization)
+
                 bands = flatbands(res)
                 m[e] = FlatBands(bands)
+
+                fermi = res[:fermi]
+                
+                up   = res[:bands].up
+                down = res[:bands].down
+
+                n_up_conduction   = count(x->maximum(x.eigvals) > fermi, up)
+                n_down_conduction = count(x->maximum(x.eigvals) > fermi, down)
+
+                if n_up_conduction == 0 || n_down_conduction == 0
+                    log(e, "There were no conduction bands for a spin channel, increasing nbnd and rerunning.")
+                    suppress() do
+                        c = m[Template][e].calculation
+                        if haskey(c, :nbnd)
+                            c[:nbnd] = ceil(Int, 1.2 * c[:nbnd])
+                        else
+                            c[:nbnd] = ceil(Int, res[:n_KS_states] * 1.2)
+                        end
+                    end
+                    should_rerun(m, e, Results, FlatBands, SimJob)
+                end
             end
             
         end

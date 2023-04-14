@@ -6,8 +6,8 @@ quiet = false
 optimize = 2
 
 [sysimg]
-incremental=false
+incremental=true
 filter_stdlibs=true
 
-# [sysimg.precompile]
-# execution_file = ["src/GOMEO/precompile.jl"]
+[sysimg.precompile]
+execution_file = ["src/CLI/precompile.jl"]

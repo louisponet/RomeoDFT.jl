@@ -88,7 +88,7 @@ function plot_states(es::Vector, nat::Int, gs;
     end
     if BaseCase in es[end]
         base_e = es[end]
-        if Results in base_e
+        if Results in base_e && FlatBands in base_e
             res = base_e[Results]
             push!(energies, include_hub_energy ? res.total_energy * E_conv_fac / nat : dft_energy(res) * E_conv_fac / nat)
             push!(properties["energies"], rel_energy ? energies[end] - e_min : energies[end])

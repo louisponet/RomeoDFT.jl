@@ -160,8 +160,8 @@ function Overseer.update(::HPProcessor, m::AbstractLedger)
             m[e] = HPResults(hub_ats)
             
             diff = update_hubbard_u!(m[Template][e.e].structure, hub_ats)
-            if !isempty(m[BaseCase]) && e.e == entity(m[BaseCase], 1)
-                update_hubbard_u!(m[Template][entity(m[Unique],1)].structure, hub_ats)
+            if !isempty(m[BaseCase]) && Entity(oldest_parent(m, e)) == entity(m[BaseCase], 1)
+                update_hubbard_u!(m[Template][entity(m[StopCondition],1)].structure, hub_ats)
             end
             
             if diff > e.U_conv_thr
@@ -176,6 +176,7 @@ function Overseer.update(::HPProcessor, m::AbstractLedger)
                 should_rerun(m, e, SimJob)
                 
             else
+                log(e, "HP U diff with original structure: $diff, thr = $(e.U_conv_thr) --> Converged.")
                 if e.job.calculations[end].name == "hp"
                     m[e] = Done(false)
                 end

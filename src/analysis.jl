@@ -2,11 +2,10 @@
 write_xsf(filename::String, wfc::Wfc3D{T}) where T<:AbstractFloat
 Writes the real part of the Wfc3D to a .xsf file that is readable by XCrysden or VESTA.
 """
-function write_xsf(filename::String, l::AbstractLedger)
-    gs = ground_state(l)
-    structure = deepcopy(l[Template][gs].structure)
-    if RelaxResults in l && gs in l[RelaxResults]
-        Structures.update_geometry!(structure, l[RelaxResults][gs].final_structure)
+function write_xsf(filename::String, gs::Overseer.EntityState)
+    structure = deepcopy(gs[Template].structure)
+    if RelaxResults in gs
+        Structures.update_geometry!(structure, gs[RelaxResults].final_structure)
     end
     open(filename,"w") do f
         write(f,"# Generated from PhD calculations\n")
@@ -34,6 +33,11 @@ function write_xsf(filename::String, l::AbstractLedger)
             end
         end
     end
+end
+
+function write_xsf(filename::String, l::AbstractLedger)
+    gs = ground_state(l)
+    write_xsf(filename, gs)
 end
 
 function relative_energies(es; include_hub_energy = true, eV = true)

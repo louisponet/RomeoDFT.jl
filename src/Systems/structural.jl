@@ -82,8 +82,8 @@ function process_structure_update!(m::Searcher, e::AbstractEntity, final_structu
         Structures.update_geometry!(m[Template][e].structure, final_structure)
         Structures.update_geometry!(e.job.structure, final_structure)
         
-        if !isempty(m[BaseCase]) && e.e == entity(m[BaseCase], 1)
-            search_e = entity(m[Unique], 1)
+        if !isempty(m[BaseCase]) && Entity(oldest_parent(m, e)) == entity(m[BaseCase], 1)
+            search_e = entity(m[StopCondition], 1)
             Structures.update_geometry!(m[Template][search_e].structure, final_structure)
         end
         
@@ -112,7 +112,7 @@ function Overseer.update(::RelaxProcessor, m::AbstractLedger)
         
         res = o[cname]
         
-        results = results_from_output(res, e in m[BaseCase])
+        results = results_from_output(res, oldest_parent(m, e) in m[BaseCase])
         
         m[e] = results
 
@@ -124,8 +124,28 @@ function Overseer.update(::RelaxProcessor, m::AbstractLedger)
         if haskey(res, :bands) && haskey(res, :total_magnetization)
             bands = flatbands(res)
             m[e] = FlatBands(bands)
-        end
+            
+            fermi = res[:fermi]
+            
+            up   = res[:bands].up
+            down = res[:bands].down
 
+            n_up_conduction   = count(x->maximum(x.eigvals) > fermi, up)
+            n_down_conduction = count(x->maximum(x.eigvals) > fermi, down)
+
+            if n_up_conduction == 0 || n_down_conduction == 0
+                log(e, "There were no conduction bands for a spin channel, increasing nbnd and rerunning.")
+                suppress() do
+                    c = m[Template][e].calculation
+                    if haskey(c, :nbnd)
+                        c[:nbnd] = ceil(Int, 1.2*c[:nbnd])
+                    else
+                        c[:nbnd] = ceil(Int, res[:n_KS_states] * 1.2)
+                    end
+                end
+                should_rerun(m, e, Results, FlatBands, SimJob)
+            end
+        end
         # Update structures
         if haskey(res, :total_force) && haskey(res, :final_structure)
             str = res[:final_structure]

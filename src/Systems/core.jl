@@ -292,6 +292,9 @@ Overseer.requested_components(::Cleaner) = (Done, SimJob)
 
 function Overseer.update(::Cleaner, m::AbstractLedger)
     @error_capturing_threaded for e in @safe_entities_in(m, Done && SimJob)
+        if e.cleaned
+            continue
+        end
         s  = Server(e.job.server)
         
         if e.remote_dir != e.local_dir && ispath(s, e.remote_dir)
@@ -380,32 +383,25 @@ Overseer.requested_components(::Rerunner) = (ShouldRerun, Rerun)
 function Overseer.update(::Rerunner, m::AbstractLedger)
     @error_capturing_threaded for e in @safe_entities_in(m, ShouldRerun)
         
-        from_scratch = false
-        for d in e.data_to_pop
-            dat = trypop!(m[d], e)
-            
-            if d == SimJob
-                if dat !== nothing
-                    server = Server(dat.job.server)
-                    if isalive(server) && ispath(server, dat.remote_dir)
-                        rm(server, dat.remote_dir)
-                    end
-                end
-                
-                trypop!(m[ServerInfo], e)
-                trypop!(m[Unique], e)
-                from_scratch = true
-                
+        from_scratch = SimJob in e.data_to_pop
+
+        if from_scratch
+            m[e] = Done(false)
+
+            # TODO always assumes postprocessing and does not keep previous results
+            ppe = create_postprocess_child!(m, e)
+        else
+            for d in e.data_to_pop
+                dat = trypop!(m[d], e)
             end
-        end
-        if !from_scratch
             set_status!(m, e, Submit())
+            trypop!(m[Done], e)
+            ppe = e    
         end
         
-        trypop!(m[Done], e)
-        pop!(m[ShouldRerun], e) 
+        m[ppe] = Rerun(e in m[Rerun] ? m[Rerun][e].count + 1 : 1)
+        pop!(m[ShouldRerun], e)
         
-        m[e] = Rerun(e in m[Rerun] ? m[Rerun][e].count + 1 : 1)
     end
 end
 
