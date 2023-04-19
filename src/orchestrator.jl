@@ -160,7 +160,6 @@ function unload_finished()
     if !isempty(ns)
         @debug "Unloading $(length(ns)) finished searchers: $(join(ns, " - "))"
         for (i, n) in enumerate(ns)
-            final_report(finished_ls[i])
             unload_searcher(n)
         end
     end

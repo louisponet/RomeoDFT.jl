@@ -129,6 +129,12 @@ function Base.show(io::IO, ::MIME"text/plain", log::Log)
         println(io, "[$i] $l")
     end
 end
+Base.push!(l::Log, args...) = push!(l.logs, args...)
+Base.prepend!(l::Log, args...) = prepend!(l.logs, args...)
+Base.append!(l::Log, args...) = append!(l.logs, args...)
+Base.push!(l::Log, l2::Log) = push!(l.logs, l2.logs)
+Base.prepend!(l::Log, l2::Log) = prepend!(l.logs, l2.logs)
+Base.append!(l::Log, l2::Log) = append!(l.logs, l2.logs)
 
 """
     ShouldRerun

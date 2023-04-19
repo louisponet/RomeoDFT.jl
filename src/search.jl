@@ -933,23 +933,63 @@ function create_postprocess_child!(l, parent_entity, comps...)
     return ppe
 end
 
-function all_children_done(l, parent)
-    child_comp = l[Child]
-    done_comp = l[Done]
-    
-    while parent ∈ child_comp
-        parent = child_comp[parent].child
-        if parent ∉ done_comp
-            return false
-        end
+function recurse_parents(f::Function, l::AbstractLedger, e::AbstractEntity, inclusive=false)
+    parent_comp = l[Parent]
+    if inclusive
+        f(e)
     end
-    return true
+    while e ∈ parent_comp
+        e = parent_comp[e].parent
+        f(e)
+    end
+end
+
+function recurse_children(f::Function, l::AbstractLedger, e::AbstractEntity, inclusive=false)
+    child_comp = l[Child]
+    if inclusive
+        f(e)
+    end
+    while e ∈ child_comp
+        e = child_comp[e].child
+        f(e)
+    end
+end
+
+function youngest_child(l, e)
+    out = Entity(e)
+    recurse_children(l, e) do child
+        out = child
+    end
+    return out
 end
 
 function oldest_parent(l, e)
-    parent_comp = l[Parent]
-    while e ∈ parent_comp
-        e = parent_comp[e].parent
+    out = Entity(e) 
+    recurse_parents(l, e) do parent
+        out = parent
     end
-    return e
+    return out
+end
+
+
+function all_children_done(l, parent)
+    done_comp = l[Done]
+    out = recurse_children(l, parent, true) do child
+        if child ∉ done_comp
+            return false
+        end
+    end
+    return out === nothing ? true : false
+end
+   
+function gather_logs(l, e)
+    full_log = Log()
+    log_comp = l[Log]
+    recurse_parents(l, e) do parent
+        prepend!(full_log, log_comp[parent])
+    end
+    recurse_children(l, e, true) do child
+        append!(full_log, log_comp[child])
+    end
+    return full_log
 end

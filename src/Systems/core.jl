@@ -521,7 +521,7 @@ function check_basecase!(m::AbstractLedger)
                           Template(new_str, deepcopy(m[Template][base_e].calculation)),
                           Generation(maximum_generation(m)))
                           
-        for c in filter(x -> x isa PostProcessSettings, m[base_e])
+        for c in Iterators.filter(x -> x isa PostProcessSettings, m[base_e])
             component = m[typeof(c)]
             if component isa PooledComponent
                 component[new_e] = base_e
@@ -595,6 +595,7 @@ function Overseer.update(::Stopper, m::AbstractLedger)
                 verify_groundstates!(m)
                 @debug "All postprocessing has finished, stopping search."
                 @debug "Found $(sum(n_unique)) Unique states after $(sum(n_total)) Trials."
+                final_report(l)
                 m.stop = true
                 m.finished = true
             else
