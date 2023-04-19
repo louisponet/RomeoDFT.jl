@@ -111,41 +111,44 @@ function Overseer.update(::RelaxProcessor, m::AbstractLedger)
         e.job[cname].run = false
         
         res = o[cname]
-        
-        results = results_from_output(res, oldest_parent(m, e) in m[BaseCase])
-        
-        m[e] = results
 
-        # We set the trial to the updated occupations in case we need to rerun
-        if e in m[Trial] && !isempty(results.state.occupations)
-            m[e] = Trial(results.state, PostProcess)
-        end
-        
-        if haskey(res, :bands) && haskey(res, :total_magnetization)
-            bands = flatbands(res)
-            m[e] = FlatBands(bands)
+        if !any(x->x.name == "scf", j.calculations)
+            results = results_from_output(res, oldest_parent(m, e) in m[BaseCase])
             
-            fermi = res[:fermi]
+            m[e] = results
             
-            up   = res[:bands].up
-            down = res[:bands].down
+            if haskey(res, :bands) && haskey(res, :total_magnetization)
+                bands = flatbands(res)
+                m[e] = FlatBands(bands)
+                
+                fermi = res[:fermi]
+                
+                up   = res[:bands].up
+                down = res[:bands].down
 
-            n_up_conduction   = count(x->maximum(x.eigvals) > fermi, up)
-            n_down_conduction = count(x->maximum(x.eigvals) > fermi, down)
+                n_up_conduction   = count(x->maximum(x.eigvals) > fermi, up)
+                n_down_conduction = count(x->maximum(x.eigvals) > fermi, down)
 
-            if n_up_conduction == 0 || n_down_conduction == 0
-                log(e, "There were no conduction bands for a spin channel, increasing nbnd and rerunning.")
-                suppress() do
-                    c = m[Template][e].calculation
-                    if haskey(c, :nbnd)
-                        c[:nbnd] = ceil(Int, 1.2*c[:nbnd])
-                    else
-                        c[:nbnd] = ceil(Int, res[:n_KS_states] * 1.2)
+                if n_up_conduction == 0 || n_down_conduction == 0
+                    log(e, "There were no conduction bands for a spin channel, increasing nbnd and rerunning.")
+                    suppress() do
+                        c = m[Template][e].calculation
+                        if haskey(c, :nbnd)
+                            c[:nbnd] = ceil(Int, 1.2*c[:nbnd])
+                        else
+                            c[:nbnd] = ceil(Int, res[:n_KS_states] * 1.2)
+                        end
                     end
+                    should_rerun(m, e, Results, FlatBands, SimJob)
                 end
-                should_rerun(m, e, Results, FlatBands, SimJob)
             end
         end
+
+        # We set the trial to the updated occupations in case we need to rerun
+        if e in m[Trial] && !isempty(m[Results][e].state.occupations)
+            m[e] = Trial(m[Results][e].state, PostProcess)
+        end
+        
         # Update structures
         if haskey(res, :total_force) && haskey(res, :final_structure)
             str = res[:final_structure]
@@ -177,18 +180,18 @@ function Overseer.update(::RelaxProcessor, m::AbstractLedger)
                     insert!(e.job, cid + 1, tc)
                     
                     scf_id = cid + 1
+                    for i = scf_id:length(e.job.calculations)
+                        e.job.calculations[i].run = true
+                    end
+                        
+                    log(e, "vcrelax went wrong even though it converged, could be symmetry issues.\nCreating an scf with the final structure for further steps.")
+                    should_rerun(m, e)
+                    continue
                 end
-                
-                for i = scf_id:length(e.job.calculations)
-                    e.job.calculations[i].run = true
-                end
-                    
-                should_rerun(m, e) 
+
             end
+            m[e] = Done(false)
             
-            if e.job.calculations[end].name == cname
-                m[e] = Done(false)
-            end
             
         elseif res[:finished] && !res[:converged]
             # Standard non converged vcrelax (at the first scf step)

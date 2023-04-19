@@ -118,7 +118,7 @@ function Overseer.update(::ResultsProcessor, m::AbstractLedger)
         
         if !isempty(o)
             res = o["scf"]
-            results = results_from_output(res, e in m[BaseCase])
+            results = results_from_output(res, oldest_parent(m, e) in m[BaseCase])
             
             m[e] = results
             

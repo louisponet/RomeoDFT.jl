@@ -381,7 +381,7 @@ struct Rerunner <: System end
 Overseer.requested_components(::Rerunner) = (ShouldRerun, Rerun)
 
 function Overseer.update(::Rerunner, m::AbstractLedger)
-    @error_capturing_threaded for e in @safe_entities_in(m, ShouldRerun)
+    @error_capturing for e in @safe_entities_in(m, ShouldRerun)
         
         from_scratch = SimJob in e.data_to_pop
 

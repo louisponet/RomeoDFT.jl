@@ -793,7 +793,9 @@ end
 The main loop that executes the global searching.
 """
 function loop(l::Searcher; verbosity=l.verbosity, sleep_time=l.sleep_time)
-    l.verbosity = verbosity
+    if verbosity >= 0
+        l.verbosity = verbosity
+    end
     l.sleep_time = sleep_time
     http_logpath = joinpath(l.rootdir, "HTTP.log")
     logpath = joinpath(l.rootdir, "log.log")
@@ -974,9 +976,10 @@ end
 
 function all_children_done(l, parent)
     done_comp = l[Done]
-    out = recurse_children(l, parent, true) do child
+    out = true
+    recurse_children(l, parent, true) do child
         if child ∉ done_comp
-            return false
+            out &= false
         end
     end
     return out === nothing ? true : false

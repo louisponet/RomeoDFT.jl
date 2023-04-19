@@ -4,6 +4,11 @@ try
 catch
     nothing
 end
+try
+    RomeoDFT.orchestrator_eval("loaded_searchers()")
+catch
+    nothing
+end
 l = Searcher(; rootdir = tempname(), sleep_time = 5)
 save(l)
 load(l)

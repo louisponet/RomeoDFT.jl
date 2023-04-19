@@ -89,7 +89,7 @@ module searcher
     - `--verbosity, -v`: logging verbosity
     - `--sleep-time, -s`: sleep time between searcher updates
     """
-    @cast function start(name::String; verbosity::Int = 0, sleep_time::Float64 = 30.0)
+    @cast function start(name::String; verbosity::Int = -1, sleep_time::Float64 = 30.0)
         return print(orchestrator_eval("start_searcher(\"$name\"; verbosity=$verbosity, sleep_time=$sleep_time)"))
     end
     
