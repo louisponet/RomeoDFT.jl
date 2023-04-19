@@ -1,7 +1,7 @@
 name = "RomeoDFT"
 uuid = "87c4fabc-abb4-4467-86a6-1748b5c259fe"
 authors = ["Louis Ponet<louisponet@epfl.ch>", "and contributors"]
-version = "0.2.2"
+version = "0.2.3"
 
 [deps]
 Comonicon = "863f3e99-da2a-4334-8734-de3dacbe5542"

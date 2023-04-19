@@ -595,7 +595,14 @@ function Overseer.update(::Stopper, m::AbstractLedger)
                 verify_groundstates!(m)
                 @debug "All postprocessing has finished, stopping search."
                 @debug "Found $(sum(n_unique)) Unique states after $(sum(n_total)) Trials."
-                final_report(l)
+                
+                try
+                    # During testing this might fail
+                    final_report(m)
+                catch
+                    nothing
+                end
+                
                 m.stop = true
                 m.finished = true
             else

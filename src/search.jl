@@ -982,7 +982,7 @@ function all_children_done(l, parent)
             out &= false
         end
     end
-    return out === nothing ? true : false
+    return out
 end
    
 function gather_logs(l, e)
