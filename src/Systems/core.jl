@@ -220,7 +220,16 @@ isparseable(s::RemoteHPC.JobState) = s ∈ (RemoteHPC.Completed, RemoteHPC.Faile
 function Overseer.update(::JobMonitor, m::AbstractLedger)
     run_check_time = average_runtime(m)
     run_check_time = run_check_time == 0 ? 900 : run_check_time
-    
+
+    function maybe_rerun(e, logmsg)
+        if e in m[Rerun] && m[Rerun][e].count >= 3
+            m[e] = Error(e, "Reran already 3 times and still no dice...")
+        else
+            log(e, logmsg)
+            should_rerun(m, e)
+        end
+    end
+
     @error_capturing_threaded for e in @safe_entities_in(m, SimJob && TimingInfo && !Completed && !Submit && !Pulled)
 
         if !any(x -> x.run, e.job.calculations)
@@ -263,18 +272,22 @@ function Overseer.update(::JobMonitor, m::AbstractLedger)
                     end
                     c.run = false
                 end
-                log(e, "Aborted and resubmitted job during: $(Client.last_running_calculation(e.job).name).")
-                should_rerun(m, e)
+                
+                maybe_rerun(e,
+                    "Aborted and resubmitted job during: $(Client.last_running_calculation(e.job).name).")
             end
             
         elseif s == RemoteHPC.Failed
             ofile = joinpath(e.remote_dir, Client.last_running_calculation(e.job).outfile)
             if ispath(server, e.remote_dir) && filesize(server, ofile) == 0.0
-                should_rerun(m, e)
+                maybe_rerun(e, "Job failed.")
             end
             
         elseif s in (RemoteHPC.NodeFail, RemoteHPC.Cancelled)
-            should_rerun(m, e)
+            
+            maybe_rerun(e,
+                "Job Cancelled during: $(Client.last_running_calculation(e.job).name).")
+                
         elseif isparseable(s)
             set_status!(m, e, Completed())
         end
@@ -397,9 +410,9 @@ function Overseer.update(::Rerunner, m::AbstractLedger)
             set_status!(m, e, Submit())
             trypop!(m[Done], e)
             ppe = e    
+            m[ppe] = Rerun(e in m[Rerun] ? m[Rerun][e].count + 1 : 1)
         end
         
-        m[ppe] = Rerun(e in m[Rerun] ? m[Rerun][e].count + 1 : 1)
         pop!(m[ShouldRerun], e)
         
     end
