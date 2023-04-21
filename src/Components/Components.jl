@@ -1,4 +1,5 @@
 abstract type PostProcessSettings end
+abstract type AbstractResults end
 
 const COMP_FILES = filter(x->x != "Components.jl", readdir(@__DIR__))
 
@@ -45,6 +46,7 @@ const Template             = RomeoDFT.v0_2.Template
 const WannierResults       = RomeoDFT.v0_2.WannierResults
 const Done                 = RomeoDFT.v0_5.Done
 const Child                = RomeoDFT.v0_1.Child
+const Children             = RomeoDFT.v0_1.Children
 const Submit               = RomeoDFT.v0_1.Submit
 const Results              = RomeoDFT.v0_6.Results
 const SCFSettings          = RomeoDFT.v0_3.SCFSettings
@@ -70,6 +72,7 @@ const Hybrid               = RomeoDFT.v0_4.Hybrid
 const Archived             = RomeoDFT.v0_2.Archived
 const Trial                = RomeoDFT.v0_5.Trial
 const Parent               = RomeoDFT.v0_1.Parent
+const Parents              = RomeoDFT.v0_1.Parents
 const ProjwfcSettings      = RomeoDFT.v0_5.ProjwfcSettings
 const RelaxChild           = RomeoDFT.v0_1.RelaxChild
 const NSCFSettings         = RomeoDFT.v0_5.NSCFSettings
@@ -80,10 +83,12 @@ const FlatBands            = RomeoDFT.v0_3.FlatBands
 const Running              = RomeoDFT.v0_1.Running
 const Timer                = RomeoDFT.v0_1.Timer
 const ServerInfo           = RomeoDFT.v0_5.ServerInfo
-const ShouldRerun          = RomeoDFT.v0_1.ShouldRerun
+const ShouldRerun          = RomeoDFT.v0_2.ShouldRerun
 const WannierSettings      = RomeoDFT.v0_5.WannierSettings
 const RandomSearcher       = RomeoDFT.v0_5.RandomSearcher
-const HPSettings           = RomeoDFT.v0_1.HPSettings
+const HPSettings           = RomeoDFT.v0_2.HPSettings
+const PPSettings           = RomeoDFT.v0_6.PPSettings
+const ElectrideSettings    = RomeoDFT.v0_6.ElectrideSettings
 
 export Template            
 export WannierResults      
@@ -127,4 +132,8 @@ export ServerInfo
 export ShouldRerun         
 export WannierSettings     
 export RandomSearcher      
-export HPSettings          
+export HPSettings
+export PPSettings
+export ElectrideSettings
+export Children
+export Parents

@@ -1,7 +1,8 @@
 module v0_1
 using ..Overseer
+using ..Overseer: AbstractEntity
 using ..RomeoDFT
-using ..RomeoDFT: State, DFWannier
+using ..RomeoDFT: State, DFWannier, AbstractResults
 
 @component mutable struct Timer
     prev_t::Float64
@@ -174,7 +175,7 @@ end
 
 Holds the results of a HP calculations.
 """
-@component struct HPResults
+@component struct HPResults <: AbstractResults
     U::Vector
 end
 
@@ -199,5 +200,41 @@ end
 @component struct RelaxChild
     child::Entity
 end
+
+"""
+    Children
+
+Signals that an [`Entity`](@ref) has some derived children [`Entities`](@ref Entity).
+"""
+@component struct Children
+    children::Set{Entity}
+end
+function Children(es::AbstractEntity...)
+    s = Set{Entity}()
+    for e in es
+        push!(s, Entity(e))
+    end
+    return Children(s)
+end
+
+Base.push!(c::Children, e::AbstractEntity) = push!(c.children, Entity(e))
+
+"""
+    Parents
+
+Signals that an [`Entity`](@ref) is derived from a set of parent [`Entities`](@ref Entity).
+"""
+@component struct Parents
+    parents::Set{Entity}
+end
+function Parents(es::AbstractEntity...)
+    s = Set{Entity}()
+    for e in es
+        push!(s, Entity(e))
+    end
+    return Parents(s)
+end
+
+Base.push!(c::Parents, e::AbstractEntity) = push!(c.parents, Entity(e))
 
 end

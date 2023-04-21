@@ -1,13 +1,16 @@
 creation_stage() = Stage(:creation, [JobCreator(),
                                      Relaxor(),
                                      HPCreator(),
-                                     BandsCreator(),
-                                     NSCFCreator(),
-                                     ProjwfcCreator()])
+                                     BandsSystem(),
+                                     NSCFSystem(),
+                                     ProjwfcSystem(),
+                                     PPSystem()])
 
 postprocessing_stage() = Stage(:postprocess, [ResultsProcessor(),
                                               RelaxProcessor(),
                                               HPProcessor(),
+                                              ElectrideCreator(),
+                                              ElectrideProcessor(),
                                               UniqueExplorer()])
     
 full_server_interaction_stage() = Stage(:server_interaction, [[JobSubmitter(), Cleaner(), OutputPuller()],

@@ -20,24 +20,28 @@ function Overseer.update(::JobCreator, m::AbstractLedger)
 
     tot_new = 0
     # initial job
-    @error_capturing_threaded for e in @entities_in(m, Template && (BaseCase || SCFSettings || Trial) && !SimJob && !Done)
+    @error_capturing_threaded for e in @entities_in(m,
+                                                    Template &&
+                                                    (BaseCase || SCFSettings || Trial) &&
+                                                    !SimJob && !Done)
         if tot_new > max_new && e ∉ m[BaseCase]
             continue
         end
         tot_new += 1
-        
-        scf_calc  = deepcopy(e.calculation)
+
+        scf_calc = deepcopy(e.calculation)
         # Some setup here that's required
         scf_calc.run = true
         delete!(scf_calc, :disk_io)
-         
+
         suppress() do
             set_name!(scf_calc, "scf")
-            
+
             if e in m[Trial]
-                scf_calc[:system][:Hubbard_occupations] = generate_Hubbard_occupations(m[Trial][e].state, e.structure)
+                scf_calc[:system][:Hubbard_occupations] = generate_Hubbard_occupations(m[Trial][e].state,
+                                                                                       e.structure)
             end
-            
+
             if e in m[SCFSettings]
                 for (f, v) in e.replacement_flags
                     if v isa Dict
@@ -49,13 +53,13 @@ function Overseer.update(::JobCreator, m::AbstractLedger)
                     end
                 end
             end
-            
+
             if e in m[BaseCase]
                 delete_Hubbard!(scf_calc)
             end
         end
         if e in m[Hybrid]
-            c1 = deepcopy(scf_calc) 
+            c1 = deepcopy(scf_calc)
             c2 = deepcopy(scf_calc)
             suppress() do
                 c1[:system][:Hubbard_conv_thr] = 1e-9
@@ -63,7 +67,7 @@ function Overseer.update(::JobCreator, m::AbstractLedger)
                 c1[:restart_mode] = "from_scratch"
                 set_name!(c1, "scf_1")
 
-                c2[:restart_mode] = "restart"
+                return c2[:restart_mode] = "restart"
             end
             calcs = Calculation[c1, c2]
         else
@@ -72,7 +76,8 @@ function Overseer.update(::JobCreator, m::AbstractLedger)
         job = Job("$(simname(m))_id_$(Entity(e).id)",
                   deepcopy(e.structure),
                   calcs;
-                  dir = local_dir(m, e), server = local_server().name, environment = "default")
+                  dir = local_dir(m, e), server = local_server().name,
+                  environment = "default")
 
         m[e] = SimJob(job.dir, "", job)
         set_status!(m, e, Submit())
@@ -81,37 +86,36 @@ end
 
 function ensure_pseudos_uploaded!(m::AbstractLedger)
     isempty(m[Template]) && return
-    
-        # This can by definition only happen if we're restarting from previous finished run, so a template structure should exist
+
+    # This can by definition only happen if we're restarting from previous finished run, so a template structure should exist
     str  = m[Template][1].structure
     calc = m[Template][1].calculation
-    
+
     servers = all_servers(m)
     for s in servers
-        
         pseudodir = joinpath(s, m, "pseudos")
         if !isalive(s) || ispath(s, pseudodir)
             continue
         end
-        
+
         mkpath(s, pseudodir)
-        
+
         for a in str.atoms
             ppath = joinpath(pseudodir, "$(a.element.symbol).UPF")
-            
+
             if ispath(s, ppath)
                 continue
             end
-            
+
             pseudo = a.pseudo
             pserver = Server(pseudo.server)
-            
+
             if !isempty(pseudo.path) && isalive(pserver)
                 write(s, ppath, read(pserver, pseudo.path))
-                
+
             elseif !isempty(pseudo.pseudo)
                 write(s, ppath, pseudo.pseudo)
-                
+
             else
                 error("Some pseudos could not be saved, set them first")
             end
@@ -138,13 +142,13 @@ function Overseer.update(::JobSubmitter, m::AbstractLedger)
     # We find the server to submit the next batch to by finding the one
     # with the pool with the least entities
     sinfo = m[ServerInfo]
-    ensure_pseudos_uploaded!(m) 
+    ensure_pseudos_uploaded!(m)
 
     # TODO: For now only 1 server
     server_info = sinfo[1]
     server_entity = entity(sinfo, 1)
     server = Server(server_info.server)
-    
+
     # First we check whether server is alive and
     # all previously submitted simjobs are in a pending or running state
     if !isempty(@entities_in(m, Submitted && !Error))
@@ -152,15 +156,16 @@ function Overseer.update(::JobSubmitter, m::AbstractLedger)
     end
 
     submit_comp = m[Submit]
-    pvec = sortperm(submit_comp.indices.packed, rev=true)
+    pvec = sortperm(submit_comp.indices.packed; rev = true)
     permute!(submit_comp, pvec)
-    
+
     @error_capturing_threaded for e in @safe_entities_in(m, Submit && SimJob)
         sinfo[e] = server_entity
-        
+
         e.job.server = server_info.server
-        already_submitted = state(server, e.remote_dir) in (RemoteHPC.Running, RemoteHPC.Pending, RemoteHPC.Submitted)
-        
+        already_submitted = state(server, e.remote_dir) in
+                            (RemoteHPC.Running, RemoteHPC.Pending, RemoteHPC.Submitted)
+
         if already_submitted
             log(e, "was already submitted somehow...")
             if e ∉ m[TimingInfo]
@@ -170,7 +175,7 @@ function Overseer.update(::JobSubmitter, m::AbstractLedger)
             set_status!(m, e, Running())
             continue
         end
-        
+
         # So we don't have to always do abspath(server, remote_dir)
         e.remote_dir = joinpath(server, m, e)
 
@@ -179,7 +184,7 @@ function Overseer.update(::JobSubmitter, m::AbstractLedger)
                 ex      = load(server, Exec(server_info.pw_exec))
                 ex.path = joinpath(dirname(ex.path), exec(c.exec))
                 c.exec  = ex
-                
+
             elseif eltype(c) == Wannier90
                 c.exec = load(server, Exec("wannier90"))
             end
@@ -190,19 +195,21 @@ function Overseer.update(::JobSubmitter, m::AbstractLedger)
         set_server_pseudos!(e.job, local_server(), m)
         local_save(e.job, e.local_dir)
         e.job.dir = e.remote_dir
-    
+
         set_server_pseudos!(e.job, server, m)
 
         suppress() do
-            priority = e in m[NSCFSettings] || e in m[BaseCase] ? server_info.priority + 1 : server_info.priority
-            submit(e.job; fillexecs = false, versioncheck=false, priority = priority)
+            priority = e in m[NSCFSettings] || e in m[BaseCase] ? server_info.priority + 1 :
+                       server_info.priority
+            return submit(e.job; fillexecs = false, versioncheck = false,
+                          priority = priority)
         end
-        
+
         if e ∉ m[TimingInfo]
             curt = Dates.datetime2unix(now())
             m[e] = TimingInfo(curt, curt, 0.0, 0.0, 0.0, 0.0, "", 0.0, 0.0)
         end
-        
+
         set_status!(m, e, Submitted())
     end
 end
@@ -215,7 +222,10 @@ It updates the timing information in [`TimingInfo`](@ref) and potentially aborts
 """
 struct JobMonitor <: System end
 
-isparseable(s::RemoteHPC.JobState) = s ∈ (RemoteHPC.Completed, RemoteHPC.Failed, RemoteHPC.Completing, RemoteHPC.Timeout)
+function isparseable(s::RemoteHPC.JobState)
+    return s ∈
+           (RemoteHPC.Completed, RemoteHPC.Failed, RemoteHPC.Completing, RemoteHPC.Timeout)
+end
 
 function Overseer.update(::JobMonitor, m::AbstractLedger)
     run_check_time = average_runtime(m)
@@ -230,39 +240,40 @@ function Overseer.update(::JobMonitor, m::AbstractLedger)
         end
     end
 
-    @error_capturing_threaded for e in @safe_entities_in(m, SimJob && TimingInfo && !Completed && !Submit && !Pulled)
-
-        if !any(x -> x.run, e.job.calculations)
+    @error_capturing_threaded for e in @safe_entities_in(m,
+                                                         SimJob && TimingInfo && !Completed &&
+                                                         !Submit && !Pulled)
+        if !any(x -> x.run, e.job.calculations) && e ∉ m[Submitted]
             continue
         end
-        
+
         server = Server(e.job.server)
         curt   = Dates.datetime2unix(now())
         prevt  = e.cur_time
         dt     = curt - prevt
-        
+
         s = state(e.job)
         set_status!(m, e, s)
-        
+
         if s == RemoteHPC.Pending
             e.pending += dt
-            
+
         elseif s == RemoteHPC.Running
             e.running += dt
-            
+
             cur_running   = Client.last_running_calculation(e.job).name
             prev_filesize = e.current_filesize
             cur_filesize  = filesize(server, joinpath(e.remote_dir, e.job[cur_running].outfile))
-            
+
             e.current_filesize = Float64(cur_filesize)
             if cur_running != e.current_running || cur_filesize != prev_filesize
                 e.current_runtime = 0.0
             else
                 e.current_runtime += dt
             end
-            
+
             e.current_running = cur_running
-            
+
             # If filesize didn't change for 30min we abort
             if e.current_runtime > 2 * run_check_time && prev_filesize == e.current_filesize
                 abort(e.job)
@@ -272,22 +283,21 @@ function Overseer.update(::JobMonitor, m::AbstractLedger)
                     end
                     c.run = false
                 end
-                
+
                 maybe_rerun(e,
-                    "Aborted and resubmitted job during: $(Client.last_running_calculation(e.job).name).")
+                            "Aborted and resubmitted job during: $(Client.last_running_calculation(e.job).name).")
             end
-            
+
         elseif s == RemoteHPC.Failed
             ofile = joinpath(e.remote_dir, Client.last_running_calculation(e.job).outfile)
             if ispath(server, e.remote_dir) && filesize(server, ofile) == 0.0
                 maybe_rerun(e, "Job failed.")
             end
-            
+
         elseif s in (RemoteHPC.NodeFail, RemoteHPC.Cancelled)
-            
             maybe_rerun(e,
-                "Job Cancelled during: $(Client.last_running_calculation(e.job).name).")
-                
+                        "Job Cancelled during: $(Client.last_running_calculation(e.job).name).")
+
         elseif isparseable(s)
             set_status!(m, e, Completed())
         end
@@ -308,18 +318,18 @@ function Overseer.update(::Cleaner, m::AbstractLedger)
         if e.cleaned
             continue
         end
-        s  = Server(e.job.server)
-        
+        s = Server(e.job.server)
+
         if e.remote_dir != e.local_dir && ispath(s, e.remote_dir)
             log(e, "Cleaning $(e.remote_dir) on Server $(s.name)")
             rm(s, e.remote_dir)
         end
         e[Done] = Done(true)
     end
-    
+
     @error_capturing_threaded for e in @safe_entities_in(m, SimJob && Error)
         s = Server(e.job.server)
-        
+
         opath = joinpath(e.remote_dir, "outputs")
         if ispath(s, opath)
             log(e, "Cleaning $opath on Server $(s.name)")
@@ -327,7 +337,6 @@ function Overseer.update(::Cleaner, m::AbstractLedger)
         end
     end
 end
-
 
 """
     OutputPuller
@@ -338,15 +347,15 @@ struct OutputPuller <: System end
 Overseer.requested_components(::OutputPuller) = (Done, SimJob, Completed, Pulled)
 function Overseer.update(::OutputPuller, m::AbstractLedger)
     @error_capturing_threaded for e in @safe_entities_in(m, SimJob && Completed)
-        curt          = Dates.datetime2unix(now())
-        
+        curt = Dates.datetime2unix(now())
+
         server = Server(e.job.server)
-           
+
         should_resubmit = false
-       
+
         running_calcs = filter(x -> x.run, e.job.calculations)
-        RemoteHPC.pull(e.job, e.local_dir, calcs=running_calcs)
-        
+        RemoteHPC.pull(e.job, e.local_dir; calcs = running_calcs)
+
         for c in running_calcs
             ofile = joinpath(e.local_dir, c.outfile)
             if !ispath(ofile) || filesize(ofile) == 0
@@ -355,16 +364,16 @@ function Overseer.update(::OutputPuller, m::AbstractLedger)
                 should_resubmit = true
                 ispath(ofile) && rm(ofile)
             else
-                c.run=false
+                c.run = false
             end
         end
-        
+
         if should_resubmit
             should_rerun(m, e)
         else
             set_status!(m, e, Pulled())
         end
-        
+
         m[e].postprocessing += Dates.datetime2unix(now()) - curt
     end
 end
@@ -396,25 +405,26 @@ Overseer.requested_components(::Rerunner) = (ShouldRerun, Rerun)
 function Overseer.update(::Rerunner, m::AbstractLedger)
     @error_capturing for e in @safe_entities_in(m, ShouldRerun)
         
-        from_scratch = SimJob in e.data_to_pop
+        from_scratch = any(x->x isa Template, e.components_to_replace)
 
         if from_scratch
             m[e] = Done(false)
 
             # TODO always assumes postprocessing and does not keep previous results
-            ppe = create_postprocess_child!(m, e)
+            create_postprocess_child!(m, e, e.components_to_replace...)
         else
-            for d in e.data_to_pop
-                dat = trypop!(m[d], e)
+            for d in e.components_to_replace
+                m[e] = d
             end
+            
             set_status!(m, e, Submit())
+            
             trypop!(m[Done], e)
-            ppe = e    
-            m[ppe] = Rerun(e in m[Rerun] ? m[Rerun][e].count + 1 : 1)
+            
+            m[e] = Rerun(e in m[Rerun] ? m[Rerun][e].count + 1 : 1)
         end
-        
+
         pop!(m[ShouldRerun], e)
-        
     end
 end
 
@@ -433,17 +443,19 @@ function Overseer.update(::ErrorCorrector, m::AbstractLedger)
             # Can also be because things converged before constraints were released (see process_Hubbard)
             if e in m[SimJob]
                 if e.niterations == e.constraining_steps != 0
-                    log(e, "ErrorCorrector: has converged scf while constraints still applied, increasing Hubbard_conv_thr.")
-                    m[Template][e].calculation[:system][:Hubbard_conv_thr] *= 1.5
-                    should_rerun(m, e, SimJob)
+                    log(e,
+                        "ErrorCorrector: has converged scf while constraints still applied, increasing Hubbard_conv_thr.")
+                    new_template = deepcopy(m[Template][e])
+                    new_template.calculation[:system][:Hubbard_conv_thr] *= 1.5
+                    should_rerun(m, e, new_template)
                 else
                     set_flow!(m[SimJob][e].job, "" => true)
+                    should_rerun(m, e)
                 end
             end
-            should_rerun(m, e, BandsResults, Results, RelaxResults, FlatBands, Completed, Pulled)
         end
     end
-    
+
     # @error_capturing for e in @safe_entities_in(m, SimJob && !ShouldRerun && !Done)
     #     if !any(x-> x.run, e.job.calculations)
     #         log(e, "ErrorCorrector: Nothing happened during postprocessing stage, resubmitting")
@@ -466,7 +478,9 @@ Checks whether the [`StopCondition`](@ref) is met, and handles the automatic swi
 the mode of the [`Searcher`](@ref).
 """
 struct Stopper <: System end
-Overseer.requested_components(::Stopper) = (Done, SimJob, IntersectionSearcher, Simulation, StopCondition)
+function Overseer.requested_components(::Stopper)
+    return (Done, SimJob, IntersectionSearcher, Simulation, StopCondition)
+end
 
 function stop_check(maxgen::Int, m::AbstractLedger)
     stop_condition = singleton(m, StopCondition)
@@ -498,42 +512,43 @@ function stop_check(maxgen::Int, m::AbstractLedger)
     return n_conseq >= stop_condition.n_generations, n_unique, n_total
 end
 
-stop_check(m::AbstractLedger) = stop_check(maximum(x->x.generation, m[Generation], init=0), m)
+function stop_check(m::AbstractLedger)
+    return stop_check(maximum(x -> x.generation, m[Generation]; init = 0), m)
+end
 
 # Check if BaseCase was ran with the magnetizations of the minimum state
 function check_basecase!(m::AbstractLedger)
-    
     base_e = entity(m[BaseCase], length(m[BaseCase]))
-    base_str    = m[Template][base_e].structure
+    base_str = m[Template][base_e].structure
 
-   
     magats = filter(ismagnetic, base_str.atoms)
     basecase_magmoms = map(x -> x.magnetization[3], magats)
-    
+
     unique_es = collect(@entities_in(m, Unique && Results))
 
     if isempty(unique_es)
         return true
     end
-    
+
     minid = findmin(x -> x.total_energy, unique_es)[2]
 
     minimum_magmoms = unique_es[minid].state.magmoms[1:length(magats)]
     minimum_zmag    = map(x -> abs(x) < 1e-2 ? 1e-5 : sign(x), minimum_magmoms)
-    
-    if any(!iszero, basecase_magmoms .- minimum_zmag) && any(!iszero, basecase_magmoms .+ minimum_zmag)
+
+    if any(!iszero, basecase_magmoms .- minimum_zmag) &&
+       any(!iszero, basecase_magmoms .+ minimum_zmag)
         @debug "Running \"vanilla\" QE with starting magnetizations of global minimum."
         new_str = deepcopy(base_str)
-        
+
         magats = filter(ismagnetic, new_str.atoms)
         for (mag, at) in zip(minimum_zmag, magats)
             at.magnetization = [0, 0, mag]
         end
-        
+
         new_e = Entity(m, BaseCase(),
-                          Template(new_str, deepcopy(m[Template][base_e].calculation)),
-                          Generation(maximum_generation(m)))
-                          
+                       Template(new_str, deepcopy(m[Template][base_e].calculation)),
+                       Generation(maximum_generation(m)))
+
         for c in Iterators.filter(x -> x isa PostProcessSettings, m[base_e])
             component = m[typeof(c)]
             if component isa PooledComponent
@@ -555,13 +570,13 @@ Makes sure that the global groundstates (including postprocessing) and
 the ground state found from purely searching both hold the necessary `Components` like `FlatBands`
 """
 function verify_groundstates!(m::AbstractLedger)
-    gs_full   = ground_state(filter(x->x.converged, @entities_in(m, Results)))
-    gs_search = ground_state(filter(x->x.converged, @entities_in(m, Results && !Parent)))
+    gs_full   = ground_state(filter(x -> x.converged, @entities_in(m, Results)))
+    gs_search = ground_state(filter(x -> x.converged, @entities_in(m, Results && !Parent)))
 
     for gs in (gs_full, gs_search)
         if gs ∉ m[FlatBands]
             j = load(local_server(), Job(local_dir(m, gs)))
-            o = outputdata(j, calcs = [j.calculations[1].name])[j.calculations[1].name]
+            o = outputdata(j; calcs = [j.calculations[1].name])[j.calculations[1].name]
             m[gs] = FlatBands(flatbands(o))
         end
     end
@@ -593,29 +608,29 @@ function Overseer.update(::Stopper, m::AbstractLedger)
 
     search_entities = @entities_in(m, Trial && (RandomSearcher || Intersection))
     search_done     = all(x -> x in m[Done] || x in m[Error], search_entities)
-    
+
     if (!stop_condition_met && search_done)
         set_mode!(m, :search)
         prepare(m)
         return
     end
-        
+
     if mode(m) == :postprocess
         all_entities = @entities_in(m, (Trial || BaseCase) && !(Done || Error))
-        if length(all_entities) == 0 
+        if length(all_entities) == 0
             # Check if stop condition is still met
             if stop_condition_met && check_basecase!(m)
                 verify_groundstates!(m)
                 @debug "All postprocessing has finished, stopping search."
                 @debug "Found $(sum(n_unique)) Unique states after $(sum(n_total)) Trials."
-                
+
                 try
                     # During testing this might fail
                     final_report(m)
                 catch
                     nothing
                 end
-                
+
                 m.stop = true
                 m.finished = true
             else
@@ -629,6 +644,5 @@ function Overseer.update(::Stopper, m::AbstractLedger)
         prepare(m)
         @debug "Stop condition was met at Generation($maxgen), switching to pure postprocessing mode."
     end
-    @debugv 2 "Generation($maxgen): $(sum(n_unique)) unique states after $(sum(n_total)) trials." 
+    @debugv 2 "Generation($maxgen): $(sum(n_unique)) unique states after $(sum(n_total)) trials."
 end
-

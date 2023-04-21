@@ -79,15 +79,15 @@ function process_structure_update!(m::Searcher, e::AbstractEntity, final_structu
         log(e, "Diff of relaxed structure with original: $diff") 
         
         # Update structure for possibly rerunning
-        Structures.update_geometry!(m[Template][e].structure, final_structure)
-        Structures.update_geometry!(e.job.structure, final_structure)
+        new_template = deepcopy(m[Template][e])
+        Structures.update_geometry!(new_template.structure, final_structure)
         
         if !isempty(m[BaseCase]) && Entity(oldest_parent(m, e)) == entity(m[BaseCase], 1)
             search_e = entity(m[StopCondition], 1)
             Structures.update_geometry!(m[Template][search_e].structure, final_structure)
         end
         
-        return diff 
+        return diff, new_template
     end
 end
 
@@ -131,15 +131,17 @@ function Overseer.update(::RelaxProcessor, m::AbstractLedger)
 
                 if n_up_conduction == 0 || n_down_conduction == 0
                     log(e, "There were no conduction bands for a spin channel, increasing nbnd and rerunning.")
+                    
                     suppress() do
-                        c = m[Template][e].calculation
+                        new_template = deepcopy(m[Template][e])
+                        c = new_template.calculation
                         if haskey(c, :nbnd)
                             c[:nbnd] = ceil(Int, 1.2*c[:nbnd])
                         else
                             c[:nbnd] = ceil(Int, res[:n_KS_states] * 1.2)
                         end
+                        should_rerun(m, e, new_template)
                     end
-                    should_rerun(m, e, Results, FlatBands, SimJob)
                 end
             end
         end
@@ -153,13 +155,13 @@ function Overseer.update(::RelaxProcessor, m::AbstractLedger)
         if haskey(res, :total_force) && haskey(res, :final_structure)
             str = res[:final_structure]
             
-            diff = process_structure_update!(m, e, str)
+            diff, new_template = process_structure_update!(m, e, str)
             
             relres = RelaxResults(res[:n_scf], res[:total_force][end], str, diff)
             m[e] = relres
             
             if diff > e.force_convergence_threshold && (!res[:converged] || !res[:finished])
-                should_rerun(m, e, SimJob)
+                should_rerun(m, e, new_template)
                 continue
                 
             elseif res[:converged] && !res[:finished]
@@ -195,15 +197,15 @@ function Overseer.update(::RelaxProcessor, m::AbstractLedger)
             
         elseif res[:finished] && !res[:converged]
             # Standard non converged vcrelax (at the first scf step)
-            
-            calc = m[Template][e].calculation
+            new_template = deepcopy(m[Template][e])
+            calc = new_template.calculation
             
             if calc[:electron_maxstep] < 1000
                 
                 suppress() do 
                     calc[:electron_maxstep] *= 2
                 end
-                should_rerun(m, e, SimJob)
+                should_rerun(m, e, new_template)
                 
                 log(e, "vcrelax did not converge, increased electron maxstep to $(calc[:electron_maxstep])")
                 
@@ -212,7 +214,7 @@ function Overseer.update(::RelaxProcessor, m::AbstractLedger)
                 suppress() do
                     calc[:mixing_beta] *= 0.5
                 end
-                should_rerun(m, e, SimJob)
+                should_rerun(m, e, new_template)
                 
                 log(e, "vcrelax did not converge, lowered mixing beta to $(calc[:mixing_beta])")
                 

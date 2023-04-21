@@ -2,7 +2,7 @@ module v0_2
 using ..Overseer
 using ..DFControl.Jobs
 using ..v0_1
-using ..RomeoDFT: State, DFWannier, MagneticVectorType, ColinMatrixType
+using ..RomeoDFT: State, DFWannier, MagneticVectorType, ColinMatrixType, PostProcessSettings, AbstractResults
 using ..RomeoDFT.DFControl: Projection, Calculation, QE, Structure
 
 """
@@ -62,7 +62,7 @@ end
 
 Stores the path to a bandstructure plot.
 """
-@component struct BandsResults
+@component struct BandsResults <: AbstractResults
     plot_file::String
 end
 
@@ -118,7 +118,7 @@ end
 
 Component that holds the important results of a wannier calculation.
 """
-@component Base.@kwdef struct WannierResults
+@component Base.@kwdef struct WannierResults <: AbstractResults
     hami_path::String
     wfuncs_path::String
 end
@@ -152,7 +152,7 @@ end
 
 Holds the results of a relaxation.
 """
-@component struct RelaxResults
+@component struct RelaxResults <: AbstractResults
     n_steps::Int
     total_force::Float64
     final_structure::Structure
@@ -161,5 +161,35 @@ end
 
 Base.convert(::Type{RelaxResults}, x::v0_1.RelaxResults) = RelaxResults(x.n_steps, x.total_force, x.final_structure, 0.0)
 
+"""
+    HPSettings
+
+Holds the settings for a HP calculation.
+"""
+@pooled_component Base.@kwdef struct HPSettings <: PostProcessSettings
+    nq::NTuple{3, Int} = (2,2,2)
+    conv_thr_chi::Float64 = 1e-6
+    find_atpert::Int = 1
+    U_conv_thr::Float64 = 0.1
+    U_max::Float64 = 15.0
+end
+Base.convert(::Type{HPSettings}, x::v0_1.HPSettings) = HPSettings(x.nq, x.conv_thr_chi, x.find_atpert, x.U_conv_thr, 15.0)
+
+"""
+    ShouldRerun
+
+Signals that a job should be reran.
+`components_to_replace` denotes the [`Components`](@ref Component) that should not be taken from the parent.
+"""
+@component Base.@kwdef struct ShouldRerun
+    components_to_replace::Vector{Any} = Any[]
+    function ShouldRerun(v::Vector)
+        new(v)
+    end
+    function ShouldRerun(a::Any, args...)
+        new(Any[a, args...])
+    end
+end
+Base.push!(s::ShouldRerun, d) = push!(s.components_to_replace, d)
 
 end

@@ -126,12 +126,13 @@ function Overseer.update(::HPProcessor, m::AbstractLedger)
             end
                 
             # Probably too low cutoffs
-            if m[Template][e].calculation[:ecutwfc] >= 100
+            new_template = deepcopy(m[Template][e])
+            if new_template.calculation[:ecutwfc] >= 100
                 m[e] = Error(e, "Cutoff larger than 100 and still no HP results")
                 continue
             end
             
-            calc = m[Template][e].calculation
+            calc = new_template.calculation
             tcut = calc[:ecutwfc] *= 1.2
             log(e, "HP: Fermi level shift too big. Increasing cutoff to $tcut")
             
@@ -139,7 +140,7 @@ function Overseer.update(::HPProcessor, m::AbstractLedger)
                 calc[:ecutrho] *= 1.2
             end
             
-            should_rerun(m, e, SimJob)
+            should_rerun(m, e, new_template)
             
         elseif !haskey(o["hp"], :Hubbard_U)
             
@@ -158,10 +159,15 @@ function Overseer.update(::HPProcessor, m::AbstractLedger)
         else
             hub_ats = o["hp"][:Hubbard_U]
             m[e] = HPResults(hub_ats)
+
+            new_template = deepcopy(m[Template][Entity(e)])
             
-            diff = update_hubbard_u!(m[Template][e.e].structure, hub_ats)
+            diff = update_hubbard_u!(new_template.structure, hub_ats)
+            
             if !isempty(m[BaseCase]) && Entity(oldest_parent(m, e)) == entity(m[BaseCase], 1)
-                update_hubbard_u!(m[Template][entity(m[StopCondition],1)].structure, hub_ats)
+                # Here we overwrite the structure since this is the base structure used for the search
+                sim_e = entity(m[StopCondition],1)
+                update_hubbard_u!(m[Template][sim_e].structure, hub_ats)
             end
             
             if diff > e.U_conv_thr
@@ -173,7 +179,10 @@ function Overseer.update(::HPProcessor, m::AbstractLedger)
                         rm(joinpath(e.local_dir, f))
                     end
                 end
-                should_rerun(m, e, SimJob)
+                should_rerun(m, e, new_template)
+            elseif any(x->x[3] > e.U_max, hub_ats)
+                m[e] = Error(e, "HP U above $(e.U_max), stopping the cycle.")
+                m[e] = Done(false)
                 
             else
                 log(e, "HP U diff with original structure: $diff, thr = $(e.U_conv_thr) --> Converged.")

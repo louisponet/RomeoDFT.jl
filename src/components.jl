@@ -91,8 +91,25 @@ function gencalc(job, settings::BandsSettings)
         kpath[end] = (kpath[end][1:3]..., 1.0)
         return Calculations.gencalc_bands(job["scf"], kpath)
     else
-        return Calculations.gencalc_bands(job["scf"], kpoints)
+        return Calculations.gencalc_bands(job["scf"], settings.kpoints)
     end
+end
+
+function gencalc(job, settings::PPSettings)
+    pw_calc = DFC.Utils.getfirst(x -> exec(x.exec) == "pw.x", job.calculations)
+    
+    e = deepcopy(pw_calc.exec)
+    e.path = joinpath(dirname(e), "pp.x")
+    empty!(e.flags)
+    
+    calc = Calculation(name="pp", exec=e)
+
+    suppress() do
+        for (f, v) in settings.flags
+            calc[f] = v
+        end
+    end
+    return calc 
 end
 
 function add_calc!(job, settings)

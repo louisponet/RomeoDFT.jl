@@ -140,14 +140,15 @@ function Overseer.update(::ResultsProcessor, m::AbstractLedger)
                 if n_up_conduction == 0 || n_down_conduction == 0
                     log(e, "There were no conduction bands for a spin channel, increasing nbnd and rerunning.")
                     suppress() do
-                        c = m[Template][e].calculation
+                        new_template = deepcopy(m[Template][e])
+                        c = new_template.calculation
                         if haskey(c, :nbnd)
                             c[:nbnd] = ceil(Int, 1.2 * c[:nbnd])
                         else
                             c[:nbnd] = ceil(Int, res[:n_KS_states] * 1.2)
                         end
+                        should_rerun(m, e, new_template)
                     end
-                    should_rerun(m, e, Results, FlatBands, SimJob)
                 end
             end
             
@@ -232,12 +233,6 @@ function Overseer.update(::UniqueExplorer, m::AbstractLedger)
             pp_e = e
         end
         
-        for ct in (BandsSettings, NSCFSettings, ProjwfcSettings, RelaxSettings, HPSettings) 
-            if !(pp_e in m[ct]) && unique_e in m[ct]
-                m[ct][pp_e] = unique_e
-            end
-        end
-        
         new_states += 1
     end
     
@@ -246,69 +241,40 @@ function Overseer.update(::UniqueExplorer, m::AbstractLedger)
     end
 end
 
+abstract type PostProcessSystem <: System end
 
-struct BandsCreator <: System end
-function Overseer.update(::BandsCreator, m::AbstractLedger)
-    @error_capturing for e in @safe_entities_in(m, SimJob && BandsSettings)
-        if any(x->x.name == "bands", e.job.calculations)
+struct BandsSystem <: PostProcessSystem end
+struct NSCFSystem <: PostProcessSystem end
+struct ProjwfcSystem <: PostProcessSystem end
+struct PPSystem <: PostProcessSystem end
+
+calcname(::BandsSystem)   = "bands"
+calcname(::NSCFSystem)    = "nscf"
+calcname(::ProjwfcSystem) = "projwfc"
+calcname(::PPSystem)      = "pp"
+
+Settings_T(::BandsSystem)   = BandsSettings
+Settings_T(::NSCFSystem)    = NSCFSettings
+Settings_T(::ProjwfcSystem) = ProjwfcSettings
+Settings_T(::PPSystem)      = PPSettings
+    
+function Overseer.update(s::PostProcessSystem, m::AbstractLedger)
+    cname = calcname(s)
+    sT = Settings_T(s)
+    @error_capturing for e in @safe_entities_in(m, SimJob && sT)
+        if any(x->x.name == cname, e.job.calculations)
             continue
         end
         suppress() do
-            add_calc!(e.job, e[BandsSettings])
+            add_calc!(e.job, e[sT])
         end
     end
     @error_capturing for e in @safe_entities_in(m, SimJob && Pulled)
-        if !ispath(joinpath(e.local_dir, "bands.out"))
+        if !ispath(joinpath(e.local_dir, "$cname.out"))
             continue
         end
-        if e.job.calculations[end].name == "bands"
+        if e.job.calculations[end].name == cname
             m[e] = Done(false)
         end
     end
 end
-
-struct NSCFCreator <: System end
-
-function Overseer.update(::NSCFCreator, m::AbstractLedger)
-    # Done entities mean that stuff is fully self-consistent
-    @error_capturing for e in @safe_entities_in(m, SimJob && NSCFSettings)
-        if any(x->x.name == "nscf", e.job.calculations)
-            continue
-        end
-        suppress() do
-            add_calc!(e.job, e[NSCFSettings])
-        end
-    end
-    @error_capturing for e in @safe_entities_in(m, SimJob && Pulled)
-        if !ispath(joinpath(e.local_dir, "nscf.out"))
-            continue
-        end
-        if e.job.calculations[end].name == "nscf"
-            m[e] = Done(false)
-        end
-    end
-end
-
-struct ProjwfcCreator <: System end
-
-function Overseer.update(::ProjwfcCreator, m::AbstractLedger)
-    @error_capturing for e in @safe_entities_in(m, SimJob && ProjwfcSettings)
-        if any(x->x.name == "projwfc", e.job.calculations)
-            continue
-        end
-        suppress() do
-            add_calc!(e.job, e[ProjwfcSettings])
-        end
-    end
-    @error_capturing for e in @safe_entities_in(m, SimJob && Pulled)
-        if !ispath(joinpath(e.local_dir, "projwfc.out"))
-            continue
-        end
-        if e.job.calculations[end].name == "projwfc"
-            m[e] = Done(false)
-        end
-    end
-end
-
-
-

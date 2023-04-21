@@ -1,7 +1,7 @@
 module v0_6
 using ..Overseer
 using ..v0_5
-using ..RomeoDFT: MagneticVectorType, ColinMatrixType, State
+using ..RomeoDFT: MagneticVectorType, ColinMatrixType, State, PostProcessSettings, AbstractResults
 using ..v0_2
 """
     IntersectionSearcher
@@ -35,7 +35,7 @@ end
 
 Component holding the important results of SCF calculations.
 """
-@component struct Results
+@component struct Results <: AbstractResults
     state::State{Float64, MagneticVectorType, ColinMatrixType}
     constraining_steps::Int
     closest_to_target::Float64
@@ -53,5 +53,22 @@ end
 @component struct Bin
     child::Entity
 end
+
+"""
+Settings to control PP calculations
+"""
+@pooled_component Base.@kwdef struct PPSettings <: PostProcessSettings
+    flags::Dict{Symbol, Any} = Dict{Symbol, Any}()
+end
+
+"""
+Settings to control PP calculations
+"""
+@pooled_component Base.@kwdef struct ElectrideSettings <: PostProcessSettings
+    range_below::Float64 = 0.2
+    range_above::Float64 = 0.2
+end
+
+
 
 end

@@ -2,7 +2,7 @@ module v0_3
 using ..Overseer
 using ..DFControl.Jobs
 using ..v0_2
-using ..RomeoDFT: State, local_load, PostProcessSettings
+using ..RomeoDFT: State, local_load, PostProcessSettings, AbstractResults
 using ..RomeoDFT.DFControl: Projection, Calculation, QE, Structure, Job
 
 """
@@ -48,7 +48,7 @@ end
 
 A flat representation of a bandstructure to be used with [`sssp_distance`](@ref). See also [`add_bands!`](@ref).
 """
-@component mutable struct FlatBands
+@component mutable struct FlatBands <: AbstractResults
     bands::Vector{Float64}
 end
 

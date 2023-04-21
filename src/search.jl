@@ -54,8 +54,8 @@ searcher_name(m::Searcher) = searcher_name(m.rootdir)
 Base.joinpath(m::Searcher, p...)                         = joinpath(realpath(m.rootdir), p...)
 Base.joinpath(s::Server, m::Searcher, p...)              = RemoteHPC.islocal(s) ? joinpath(m, p...) : abspath(s, joinpath("RomeoDFT", searcher_name(m), p...))
 Base.joinpath(s::Server, m::Searcher, e::AbstractEntity) = joinpath(s, m, "$(Entity(e).id)")
-
-local_dir(m::Searcher, e::AbstractEntity) = joinpath(m, "job_backups", "$(Entity(e).id)")
+Base.joinpath(m::Searcher, e::AbstractEntity, p...) = joinpath(m, "job_backups", "$(Entity(e).id)", p...)
+local_dir(m::Searcher, e::AbstractEntity) = joinpath(m, e)
 
 function simname(m)
     fdir = searcher_name(m)
@@ -104,22 +104,24 @@ function Overseer.update(stage::Stage, l::Searcher)
         if step isa Vector
             Threads.@threads for t in step
                 if t isa System
-                    to = TimerOutput()
-                    @debugv 3 "[START] $t"
-                    @timeit to "$(typeof(t))" update(t, l)
-                    @debugv 3 "[STOP] $t"
-                    merge!(l.timer, to)
+                    # to = TimerOutput()
+                    @debugv 4 "[START] $t"
+                    # @timeit to "$(typeof(t))" update(t, l)
+                    update(t, l)
+                    @debugv 4 "[STOP] $t"
+                    # merge!(l.timer, to)
                 else
                     update(t, l)
                 end
             end
         else
             if step isa System
-                to = TimerOutput()
-                @debugv 3 "[START] $step"
-                @timeit to "$(typeof(step))" update(step, l)
-                @debugv 3 "[STOP] $step"
-                merge!(l.timer, to)
+                # to = TimerOutput()
+                @debugv 4 "[START] $step"
+                # @timeit to "$(typeof(step))" update(step, l)
+                update(step, l)
+                @debugv 4 "[STOP] $step"
+                # merge!(l.timer, to)
             else
                 update(step, l)
             end
@@ -912,9 +914,46 @@ and any other `Component` in `components`.
 """
 function create_child!(l::AbstractLedger, parent_entity, components...)
     gen = parent_entity in l[Generation] ? l[Generation][parent_entity] : Generation(maximum_generation(l))
+
+    ppe = Entity(l, components...)
     
-    ppe = Entity(l, Parent(Entity(parent_entity)), Trial(l[Results][parent_entity].state, PostProcess), gen, deepcopy(l[Template][parent_entity]), components...)
-    l[parent_entity] = Child(Entity(ppe))
+    for c in l[parent_entity]
+        cT = typeof(c)
+
+        comp = l[cT]
+        if ppe in comp || !(cT <: PostProcessSettings)
+            continue
+        end
+
+        if comp isa PooledComponent
+            comp[ppe] = parent_entity
+        else
+            comp[ppe] = deepcopy(c)
+        end
+    end
+    
+    l[ppe] = Parents(Entity(parent_entity))
+
+    if ppe ∉ l[Trial]
+        l[ppe] = parent_entity in l[Results] && l[Results][parent_entity].converged ?
+                 Trial(l[Results][parent_entity].state, PostProcess) :
+                 Trial(l[Trial][parent_entity].state, PostProcess)
+    end
+
+    if ppe ∉ l[Generation]
+        l[ppe] = gen
+    end
+
+    if ppe ∉ l[Template]
+        l[ppe] = deepcopy(l[Template][parent_entity])
+    end
+
+    if parent_entity ∈ l[Children]
+        push!(l[Children][parent_entity], ppe)
+    else
+        l[Children][parent_entity] = Children(ppe)
+    end
+        
     return ppe
 end
 
@@ -928,7 +967,7 @@ function create_postprocess_child!(l, parent_entity, comps...)
     unique_e = l[entity(l[Unique], 1)]
     
     for c in components(unique_e)
-        if c isa PooledComponent && eltype(c) != Unique
+        if c isa PooledComponent && eltype(c) != Unique && ppe ∉ c
             c[ppe] = unique_e
         end
     end
@@ -936,31 +975,41 @@ function create_postprocess_child!(l, parent_entity, comps...)
 end
 
 function recurse_parents(f::Function, l::AbstractLedger, e::AbstractEntity, inclusive=false)
-    parent_comp = l[Parent]
+    parent_comp = l[Parents]
     if inclusive
         f(e)
     end
-    while e ∈ parent_comp
-        e = parent_comp[e].parent
-        f(e)
+
+    if e ∉ parent_comp
+        return
+    end
+    
+    for c in parent_comp[e].parents
+        f(c)
+        recurse_parents(f, l, c)
     end
 end
 
 function recurse_children(f::Function, l::AbstractLedger, e::AbstractEntity, inclusive=false)
-    child_comp = l[Child]
+    child_comp = l[Children]
     if inclusive
         f(e)
     end
-    while e ∈ child_comp
-        e = child_comp[e].child
-        f(e)
+    
+    if e ∉ child_comp
+        return
+    end
+    
+    for c in child_comp[e].children
+        f(c)
+        recurse_children(f, l, c)
     end
 end
 
 function youngest_child(l, e)
     out = Entity(e)
     recurse_children(l, e) do child
-        out = child
+        out = child.id > out.id ? child : out
     end
     return out
 end
@@ -968,7 +1017,7 @@ end
 function oldest_parent(l, e)
     out = Entity(e) 
     recurse_parents(l, e) do parent
-        out = parent
+        out = parent.id < out.id ? parent : out
     end
     return out
 end
@@ -986,13 +1035,25 @@ function all_children_done(l, parent)
 end
    
 function gather_logs(l, e)
-    full_log = Log()
+    
+    all_logs = Pair{Int, Log}[]
+    
     log_comp = l[Log]
+    
     recurse_parents(l, e) do parent
-        prepend!(full_log, log_comp[parent])
+        push!(all_logs, parent.id => log_comp[parent])
     end
+    
     recurse_children(l, e, true) do child
-        append!(full_log, log_comp[child])
+        push!(all_logs, child.id => log_comp[child])
     end
+
+    sort!(all_logs, by = x -> first(x))
+
+    full_log = Log()
+    for (id, log) in all_logs
+        append!(full_log, log)
+    end
+    
     return full_log
 end
