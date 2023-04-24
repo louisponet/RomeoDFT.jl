@@ -18,6 +18,18 @@ function list_searchers()
     return Text(to_text)
 end
 
+"""
+    load_searcher([f::Function,] name)
+
+Loads a [`Searcher`](@ref) to the [Orchestrator](@ref), and executes `f` on it if it is provided.
+This can be useful to perform manual tasks or retrieve more granular information about the [`Searcher`](@ref).
+# Example
+```julia
+load_searcher("MnO") do s
+    # execute code on Searcher s which represents the MnO searcher
+end
+```
+"""
 function load_searcher(p::AbstractString)
     l = load(Searcher(p))
     n = searcher_name(l)
@@ -28,6 +40,18 @@ function load_searcher(p::AbstractString)
     searchers[n] = l
     @info "Loaded searcher and assigned it label $n"
     return n
+end
+
+function load_searcher(f::Function, n::AbstractString)
+    o = ORCHESTRATOR[]
+    Main.Revise.revise()
+    if haskey(o.searchers, n)
+        Base.invokelatest(f, o.searchers[n])
+    else
+        l = load(Searcher(n))
+        Base.invokelatest(f, l)
+        save(l)
+    end
 end
 
 function unload_searcher(n::AbstractString)
@@ -42,6 +66,11 @@ function unload_searcher(n::AbstractString)
     return n
 end
 
+"""
+    start_searcher(name; verbosity=0)
+
+Starts a [`Searcher`](@ref) and sets the logging `verbosity`. Higher `verbosity` means more will be printed to the log file.
+"""
 function start_searcher(n::AbstractString; kwargs...)
     o = ORCHESTRATOR[]
     if !haskey(o.searchers, n)
@@ -57,6 +86,11 @@ function start_searcher(n::AbstractString; kwargs...)
     return n
 end
 
+"""
+    stop_searcher(name)
+
+Stops a [`Searcher`](@ref).
+"""
 function stop_searcher(n::AbstractString)
     o = ORCHESTRATOR[]
     if !haskey(o.searchers, n)
@@ -84,18 +118,6 @@ function stop_searchers(o::SearchOrchestrator)
         end
         @debug "Searches not stopped yet: $(join(map(x->x[1], not_done), " - "))"
         tries += 1
-    end
-end
-
-function load_searcher(f::Function, n::AbstractString)
-    o = ORCHESTRATOR[]
-    Main.Revise.revise()
-    if haskey(o.searchers, n)
-        Base.invokelatest(f, o.searchers[n])
-    else
-        l = load(Searcher(n))
-        Base.invokelatest(f, l)
-        save(l)
     end
 end
 

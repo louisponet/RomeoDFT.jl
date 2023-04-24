@@ -41,6 +41,7 @@ makedocs(; modules = [RomeoDFT],
                              r"https://github.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/edit(.*)"],
          pages = ["Home" => "index.md",
                   "Getting Started" => "getting_started.md",
+                  "Topics" => ["orchestrator.md","searcher.md"],
                   "Tutorial" => "tutorial.md",
                   # "Components" => "components.md",
                   # "Systems" => "systems.md"

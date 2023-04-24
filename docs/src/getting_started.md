@@ -22,61 +22,54 @@ Download and install the latest version of [Julia](https://julialang.org/downloa
 
 Next we install the main driver software which for now is not publicly available, so some steps are required.
 
-Begin by starting a julia REPL session.
-
-### First Time
-Execute the following line:
+Begin by starting a julia REPL session, and execute:
 ```julia
-mkpath(joinpath(homedir(), ".julia/dev"))
+using Pkg
+Pkg.add("RomeoDFT")
 ```
-then press `;` which activates the `shell>` REPL mode, this allows you to execute standard shell commands like in `bash`.
-Execute:
-```bash
-cd ~/.julia/dev
-git clone https://github.com/louisponet/RomeoDFT.jl RomeoDFT
-```
-Press backspace and `]` which activates the `pkg>` REPL mode, which allows you to install packages.
-Execute
-```
-dev RomeoDFT
-build RomeoDFT
-```
-The package is now being intialized, sit back grab a coffee, this takes a long time.
+or press the `]` key to enter the julia `pkg` REPL mode and type `add RomeoDFT`.
+The package is now being intialized, sit back grab a coffee, this takes a long time (~5-10 min).
 
-### Update
-Press `;` and execute
+To update to a newer version you can do
+```julia
+using Pkg
+Pkg.update("RomeoDFT")
 ```
-cd ~/.julia/dev/RomeoDFT
-git pull
-```
-Then enter the `pkg>` mode and execute
-```
-up RomeoDFT
-build RomeoDFT
-```
-again, this will take a while...
+or `up RomeoDFT` in the `pkg` REPL mode.
 
 ## ROMEO executable
 After having performed the above steps, there should be the `romeo` executable in `~/.julia/bin`.
-You can use it as, e.g. `~/.julia/bin/romeo -h`, or add `~/.julia/bin` to your `PATH`, after which you can use it from anywhere simply as `romeo -h`.
+You can use it as, e.g. `~/.julia/bin/romeo -h`.
+
+!!! note
+    It is strongly recommended to add ~/.julia/bin to your PATH environment variable by changing `~/.bashrc` or similar.
 
 ## RemoteHPC Configuration
-Next we configure the `Servers`, `Execs` and `Environments` that represent where, what and how things can be ran, in our case the `qe-occupations/bin/pw.x` executable.
+Next we configure the `Servers`, `Execs` and `Environments` that represent where, what and how executables can be ran on the remote clusters.
+In our case the `qe-occupations/bin/pw.x` executable.
 
-From a normal `shell`, execute
+!!! note
+    We will be using the default editor to write the configuration files in the following steps. If the `EDITOR` environment variable is not set, this
+    will be `nano`. Again it is advised to set it with `export EDITOR=<vim vscode or any other editor>` or in your `~/.bashrc`.
+
+From inside a shell, execute
 ```
 romeo configure
 ```
+
 ### Server
-Use the arrow keys and enter to select `Server`. A `Server` represents a computer or cluster where executables can be ran.
+Use the arrow keys and enter to select `Server`.
+A `Server` represents a computer or cluster where executables can be ran.
 Your local computer is configured automatically so if you want to run everything locally, you can skip this step.
-Fill in the `name`, `username` and `domain` that correspond to the `ssh` commands you use to connect to the cluster where you installed `qe-occupations` (e.g. `ssh lponet@cscs.ch` would mean `username = lponet`, `domain = cscs.ch`).
-If you installed it on multiple clusters, you can add them one after the other.
+Give the server a `name` that is used to load it later, and insert your `username` and `domain` that correspond to the `ssh` commands
+you use to connect to the cluster where you installed `qe-occupations` (e.g. `ssh lponet@cscs.ch` would mean `username = lponet`, `domain = cscs.ch`).
+
+If you plan to run on multiple clusters, you can add them one after the other. For now, however, each [`Searcher`](@ref) runs on a single `Server`.
 
 ### Exec
-Next select `Exec` from the menu. Read carefully the documentation that is printed, enter a `name` (for example `qe-occupations`), select the `Server` that corresponds to where you installed Quantum Espresso.
+Next select `Exec` from the menu. Read carefully the documentation that is printed, enter a `name` (for example `qe-occupations`), select the `Server` that corresponds to where you installed the patched `QuantumESPRESSO`.
 After pressing enter, an editor will open with a representation of the `Exec` with some fields already filled in.
-Complete the remaining fields, especially `path` which should be the directory of the `qe-occupations/bin/pw.x` executable on the remote `Server`.
+Complete the remaining fields, especially `path` which should be the **absolute** directory of the `qe-occupations/bin/pw.x` executable on the remote `Server`.
 Again, read the Documentation that is printed below the fields to help filling out the remaining information.
 
 ### Environment
@@ -85,5 +78,8 @@ Carefully read the documentation and fill out the fields similar to above.
 
 ### Pseudo Potentials
 Finally we set up a set of pseudopotentials. For our intention, we install them locally.
-First download and unpack your favorite set of pseudopotentials, then configure a `PseudoSet`.
+First download and unpack your favorite set of pseudopotentials into a local directoyr, then supply the directory during the configuration of a `PseudoSet`.
 Behind the scenes it will read through the directory you specified and resolve element names for the files in that directory that have the `.UPF` extension.
+
+You're now ready to start the [Orchestrator](@ref) and run your first [`Searcher`](@ref).
+
