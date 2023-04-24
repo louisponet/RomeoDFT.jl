@@ -16,7 +16,7 @@ If you want to use a different `pw.x` input or cif file from which to extract th
 ```
 romeo searcher create MnO_tutorial test/assets/MnO_scf.in -s <structure_file> --sleep-time 5
 ```
-There will be an interactive menu to further set up the `searcher`, after which it will be started by the Orchestrator.
+There will be an interactive menu to further set up the [`Searcher`](@ref), after which it will be started by the [Orchestrator](@ref).
 
 For further information on the `searcher create` command you can run
 ```
@@ -24,11 +24,11 @@ romeo searcher create -h
 ```
 
 ## Monitoring
-To get an overview of all the loaded `Searchers` you can execute
+To get an overview of all the loaded [Searchers](@ref) you can execute
 ```
 romeo orchestrator status
 ```
-To view information of a specific `Searcher`, execute:
+To view information of a specific [`Searcher`](@ref), execute:
 ```
 romeo searcher status <name>
 ```
@@ -36,7 +36,7 @@ where `<name>` in our case would be `MnO_tutorial`.
 
 ## Stopping/Starting
 
-To stop a running `Searcher` you can execute:
+To stop a running [`Searcher`](@ref) you can execute:
 ```
 romeo searcher stop <name>
 ```
@@ -44,10 +44,10 @@ and to restart it
 ```
 romeo searcher start <name>
 ```
-If no `Searcher` with `name` was loaded yet, it will be first.
+If no [`Searcher`](@ref) with `name` was loaded yet, it will be first.
 
 ## Changing mode
-By default a `Searcher` will start in the `search` mode.
+By default a [`Searcher`](@ref) will start in the `search` mode.
 This means that it is actively exploring the energy landscape in order to find unique metastable states.
 It will continue to do so until the amount of unique states versus trials goes below the value set with the `unique-ratio` flag during `romeo searcher create`.
 Afterwards, it will switch to the `postprocess` mode, meaning that it will not generate new trials, but simply process all the remaining trials and finish all the pending calculations.
@@ -58,10 +58,8 @@ This can be done using:
 ```
 romeo searcher mode <name> <mode>
 ```
-where `<mode>` is one of the following:
-- `search`: Active searching through generating new trials.
-- `postprocess`: No new trials are generated, but all remaining ones are submitted and cleaned up.
-- `cleanup`: No new trials are generated, no new jobs are submitted (i.e. previously generated but not yet submitted trials will not be submitted), and searcher finishes after all currently running calculations finish.
+
+See [Modes](@ref) for more info.
 
 ## Plot States
 An overview of the different states that are found so far can be plotted using
@@ -71,5 +69,4 @@ romeo searcher plot <name> <outfile>
 which will produce an image and save it to `outfile` displaying the states.
 
 ## Other commands
-- `romeo searcher unload <name>`: Stops, saves and removes a `Searcher` from the `Orchestrator`
-- `romeo searcher load <name>`: Loads a `Searcher`.
+See [CommandLine](@ref) for more commands.
