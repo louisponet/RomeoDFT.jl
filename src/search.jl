@@ -561,9 +561,9 @@ function setup_search(name, scf_file, structure_file = scf_file;
 
     l = Searcher(; rootdir = dir, sleep_time = sleep_time)
 
-    sim_e = Entity(l, setup_ServerInfo(; kwargs...), RandomSearcher(nflies),
+    sim_e = Entity(l, setup_ServerInfo(; kwargs...), RandomSearcher(nrand),
                    Template(deepcopy(str), deepcopy(calc)),
-                   IntersectionSearcher(mindist, 100),
+                   IntersectionSearcher(mindist_ratio, 100),
                    StopCondition(stopping_unique_ratio, stopping_n_generations),
                    Generation(1))
     # BaseCase simulation entity
