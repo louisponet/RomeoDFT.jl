@@ -583,7 +583,7 @@ function setup_search(name, scf_file, structure_file = scf_file;
         l[base_e] = relset
     end
 
-    hpset = HPSettings(hp_nq, hp_conv_thr_chi, hp_find_atpert, hp_U_conv_thr)
+    hpset = HPSettings(hp_nq, hp_conv_thr_chi, hp_find_atpert, hp_U_conv_thr, 15.0)
     if hp_unique
         l[unique_e] = hpset
     end
