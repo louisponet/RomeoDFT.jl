@@ -617,7 +617,7 @@ function Overseer.update(::Stopper, m::AbstractLedger)
 
     if mode(m) == :postprocess
         all_entities = @entities_in(m, (Trial || BaseCase) && !(Done || Error))
-        if length(all_entities) == 0
+        if length(all_entities) == 0 && all(x->x.cleaned, @entities_in(m, Done && !Error))
             # Check if stop condition is still met
             if stop_condition_met && check_basecase!(m)
                 verify_groundstates!(m)
