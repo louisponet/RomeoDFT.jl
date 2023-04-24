@@ -208,7 +208,7 @@ module searcher
                       sleep_time             = sleep_time,
                       nrand                  = nrand,
                       unique_thr             = unique_thr,
-                      mindist                = mindist_ratio,
+                      mindist_ratio          = mindist_ratio,
                       stopping_unique_ratio  = stopping_unique_ratio,
                       stopping_n_generations = stopping_n_generations,
                       Hubbard_maxstep        = Hubbard_maxstep,

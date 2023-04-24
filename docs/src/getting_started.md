@@ -66,6 +66,8 @@ you use to connect to the cluster where you installed `qe-occupations` (e.g. `ss
 
 If you plan to run on multiple clusters, you can add them one after the other. For now, however, each [`Searcher`](@ref) runs on a single `Server`.
 
+If you configured a new `Server`, go out of the configuration at this point and run `romeo server start <name of new server>` then run `romeo configure` again.
+
 ### Exec
 Next select `Exec` from the menu. Read carefully the documentation that is printed, enter a `name` (for example `qe-occupations`), select the `Server` that corresponds to where you installed the patched `QuantumESPRESSO`.
 After pressing enter, an editor will open with a representation of the `Exec` with some fields already filled in.

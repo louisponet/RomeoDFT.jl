@@ -418,7 +418,7 @@ end
 function setup_ServerInfo(; server=nothing,
                             exec=nothing,
                             environment=nothing,
-                            priority=nothing)
+                            priority=nothing, kwargs...)
     if server === nothing
         server_names = load(local_server(), Server())
         server_choice = request("Select Server to run on:", RadioMenu(server_names))
