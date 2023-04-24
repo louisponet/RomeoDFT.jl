@@ -17,6 +17,15 @@ function flatbands(all_out)
     return outbands
 end
 
+"""
+    sssp_distance(bands1, bands2, fermi)
+
+Calculates
+```math
+\sqrt{\frac{\sum_{mk} f_{mk} (\varepsilon^1_{mk} - \varepsilon^2_{mk} + \Delta)^2}{\sum_{mk}f_{mk}}}
+```
+for `bands1` and `bands2` flattened bandstructures. `fermi` is used to crudely determine `f_{mk}` and $$\Delta$$ is optimized to minimize the distance. 
+"""
 function sssp_distance(bands1, bands2, fermi)
     function obj(Δ)
         n = 0

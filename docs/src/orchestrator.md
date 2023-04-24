@@ -12,6 +12,8 @@ There are three main commands that are useful to interact with it (from a standa
 For more information use `-h` after these commands in the shell.
 
 ## Advanced
+
+### RemoteREPL
 Behind the scenes the [Orchestrator](@ref) runs in a [RemoteREPL](https://github.com/c42f/RemoteREPL.jl), which can be accessed to interact directly with
 the loaded [`Searchers`](@ref Searcher).
 This can be achieved by starting a julia REPL and executing the following commands:
@@ -28,9 +30,15 @@ The useful commands here are:
 - [`stop_searcher("<searcher_name>")`](@ref stop_searcher): stops a [`Searcher`](@ref) with the name
 - [`load_searcher`](@ref): simply loads a [`Searcher`](@ref) from disk if no function is provided as the first argument. See [`load_searcher documentation`](@ref load_searcher) for more info.
 
+## Submitting Searcher
+In order to create and submit a [`Searcher`](@ref) manually you can use [`setup_search`](@ref) and [`orchestrator_submit`](@ref) in sequence.
+
+
 ## Reference
 ```@docs
 start_searcher
 stop_searcher
 load_searcher
+connect_orchestrator
+orchestrator_submit
 ```

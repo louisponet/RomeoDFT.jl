@@ -206,7 +206,7 @@ module searcher
                       primitive              = primitive,
                       supercell              = [supercell_a, supercell_b, supercell_c],
                       sleep_time             = sleep_time,
-                      nflies                 = nrand,
+                      nrand                  = nrand,
                       unique_thr             = unique_thr,
                       mindist                = mindist_ratio,
                       stopping_unique_ratio  = stopping_unique_ratio,

@@ -3,9 +3,33 @@
 
 Represents the local state of a system. This is given by the occupation matrices of the local orbitals.
 These are usually the valence shells for example to which the +U correction is applied in DFT + U calculations.
-Can be initialized using the `hubbard` entry in the outputdata of an scf calculation. Using [`generate_Hubbard_occupations`](@ref) this can generate the `:Hubbard_occupations` scf input parameter which will be
-used as the target during a constrained scf calculation. [`generate_starting_ns_eigenvalue`](@ref)
-generates the `:starting_ns_eigenvalue` parameter instead.
+
+# Examples
+A [`State`](@ref) can be constructed from the `:Hubbard` entry from a QE `pw` output like:
+
+```julia
+using DFControl
+using RomeoDFT
+
+o = DFC.FileIO.qe_parse_pw_output("<pw_lda_U_output_file_with_Hubbard_blocks>")
+s = RomeoDFT.State(o[:Hubbard][end])
+```
+or using a `Vector` with `MagneticArrays` from [DFWannier.jl](https://github.com/louisponet/DFWannier.jl).
+```julia
+using DFWannier
+using RomeoDFT
+using LinearAlgebra
+
+up   = diagm(0 => ones(5))
+down = diagm(0 => ones(5))
+occs = [DFWannier.ColinMatrix(up, down)]
+
+s = RomeoDFT.State(occs)
+```
+
+Using [`RomeoDFT.generate_Hubbard_occupations`](@ref) this can generate the `:Hubbard_occupations` `scf` input parameter which will be
+used as the target during a constrained scf calculation.
+[`RomeoDFT.generate_starting_ns_eigenvalue`](@ref) generates the `:starting_ns_eigenvalue` parameter instead.
 """
 mutable struct State{T<:AbstractFloat,VT,MT}
     occupations::Vector{MT}

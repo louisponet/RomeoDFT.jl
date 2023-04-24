@@ -55,6 +55,11 @@ function client_stop_orchestrator()
     end
 end
 
+"""
+    orchestrator_submit(searcher)
+
+Save and submit `searcher` to the running [Orchestrator](@ref).
+"""
 function orchestrator_submit(l; verbosity=0)
     save(l)
     orchestrator_eval("start_searcher(\"$(l.rootdir)\"; verbosity=$(verbosity), sleep_time=Int($(l.sleep_time)))")
