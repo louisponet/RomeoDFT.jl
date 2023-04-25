@@ -16,7 +16,7 @@ using ThreadPools
 using LoggingExtras
 using Optim
 using Sockets
-using SnoopPrecompile
+using PrecompileTools
 using ProgressMeter
 using PrettyTables
 using TOML
@@ -66,7 +66,7 @@ include("logging.jl")
 export Searcher, connect_orchestrator
 export ground_state, unique_states
 
-# @precompile_all_calls begin
+# @compile_workload begin
 #     tn = tempname()
 #     l = Searcher(tn)
 #     Entity(l, ServerInfo("", "", "", 5))
