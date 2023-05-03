@@ -125,7 +125,7 @@ for case in test_cases
         ispath(ledger_dir) && rm(ledger_dir, recursive=true)
         
         @info "Running at $ledger_dir"
-        l = Searcher(rootdir=ledger_dir, sleep_time = 0.01)
+        l = Searcher(rootdir=ledger_dir, sleep_time = 0.01, verbosity=3)
         Entity(l, server_info)
         base_e = Entity(l, BaseCase(),
                            deepcopy(template),

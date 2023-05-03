@@ -574,8 +574,9 @@ function verify_groundstates!(m::AbstractLedger)
     gs_search = ground_state(filter(x -> x.converged, @entities_in(m, Results && !Parent)))
 
     for gs in (gs_full, gs_search)
-        if gs ∉ m[FlatBands]
-            j = load(local_server(), Job(local_dir(m, gs)))
+        ldir = local_dir(m, gs)
+        if gs ∉ m[FlatBands] && ispath(ldir)
+            j = load(local_server(), Job(ldir))
             o = outputdata(j; calcs = [j.calculations[1].name])[j.calculations[1].name]
             m[gs] = FlatBands(flatbands(o))
         end
