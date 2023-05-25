@@ -63,7 +63,7 @@ function simname(m)
     return replace(fdir, "/" => "_")
 end
 
-all_servers(m::Searcher) = [map(x -> Server(x.server), m[ServerInfo].data); local_server()]
+all_servers(m::Searcher) = [map(x -> Server(x.server), Overseer.data(m[ServerInfo])); local_server()]
 
 function average_runtime(m::Searcher)
     successful = filter(x -> x.converged, @entities_in(m, Results && TimingInfo))
@@ -733,7 +733,7 @@ function status(io::IO, l::Searcher)
     es = sort(collect(@entities_in(l, SimJob)); by = x -> x.e.id)
     if !isempty(es)
         println(io, "Current simulation jobs:")
-        curgen = isempty(l[Generation]) ? 0 : maximum(x -> x.generation, l[Generation].data)
+        curgen = isempty(l[Generation]) ? 0 : maximum(x -> x.generation, l[Generation])
         es_str = ["ID"; map(e -> string(e.e.id), es)]
         states = Vector{String}(undef, length(es))
         @sync for (ie, e) in enumerate(es)

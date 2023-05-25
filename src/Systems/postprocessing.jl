@@ -131,7 +131,7 @@ function Overseer.update(::ResultsProcessor, m::AbstractLedger)
             
             m[e] = results
             
-            e.scf_time = haskey(res, :timing) ? Dates.tons(res[:timing][end].cpu) / 1000 : e.running
+            e.scf_time = haskey(res, :timing) ? Dates.tons(res[:timing][end].wall) / 1e9 : e.running
             
             if haskey(res, :bands) && haskey(res, :total_magnetization)
 

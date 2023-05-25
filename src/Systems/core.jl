@@ -15,7 +15,7 @@ end
 
 function Overseer.update(::JobCreator, m::AbstractLedger)
     n_current_simjobs   = length(@entities_in(m, SimJob && !Error))
-    max_concurrent_jobs = sum(x -> Server(x.server).max_concurrent_jobs, m[ServerInfo].data)
+    max_concurrent_jobs = sum(x -> Server(x.server).max_concurrent_jobs, m[ServerInfo])
     max_new             = max_concurrent_jobs - n_current_simjobs
 
     tot_new = 0
@@ -156,7 +156,7 @@ function Overseer.update(::JobSubmitter, m::AbstractLedger)
     end
 
     submit_comp = m[Submit]
-    pvec = sortperm(submit_comp.indices.packed; rev = true)
+    pvec = sortperm(Overseer.indices(submit_comp).packed; rev = true)
     permute!(submit_comp, pvec)
 
     @error_capturing_threaded for e in @safe_entities_in(m, Submit && SimJob)
@@ -229,7 +229,7 @@ end
 
 function Overseer.update(::JobMonitor, m::AbstractLedger)
     run_check_time = average_runtime(m)
-    run_check_time = run_check_time == 0 ? 900 : run_check_time
+    run_check_time = run_check_time == 0 ? 1800 : run_check_time
 
     function maybe_rerun(e, logmsg)
         if e in m[Rerun] && m[Rerun][e].count >= 3
@@ -275,7 +275,7 @@ function Overseer.update(::JobMonitor, m::AbstractLedger)
             e.current_running = cur_running
 
             # If filesize didn't change for 30min we abort
-            if e.current_runtime > 2 * run_check_time && prev_filesize == e.current_filesize
+            if e.current_runtime > 0.5 * run_check_time && prev_filesize == e.current_filesize
                 abort(e.job)
                 for c in e.job.calculations
                     if c.name == cur_running
@@ -405,7 +405,7 @@ Overseer.requested_components(::Rerunner) = (ShouldRerun, Rerun)
 function Overseer.update(::Rerunner, m::AbstractLedger)
     @error_capturing for e in @safe_entities_in(m, ShouldRerun)
         
-        from_scratch = any(x->x isa Template, e.components_to_replace)
+        from_scratch = any(x -> x isa Template, e.components_to_replace)
 
         if from_scratch
             m[e] = Done(false)

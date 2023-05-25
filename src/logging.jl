@@ -84,24 +84,12 @@ function Base.pop!(c::SafeLoggingComponent{T}) where {T}
     return e
 end
 
-Base.in(e::AbstractEntity, c::SafeLoggingComponent) = in(e, c.c) 
-Base.getindex(c::SafeLoggingComponent, args...) = getindex(c.c, args...)
-Overseer.entity_data(c::SafeLoggingComponent)   = Overseer.entity_data(c.c)
-Base.empty!(c::SafeLoggingComponent)            = empty!(c.c)
+Overseer.component(c::SafeLoggingComponent) = c.c
 
 Overseer.parent(c::SafeLoggingComponent, args...) = Overseer.parent(c.c, args...)
 Overseer.npools(c::SafeLoggingComponent, args...) = Overseer.npools(c.c, args...)
 Overseer.pools(c::SafeLoggingComponent)           = Overseer.pools(c.c)
 Overseer.pool(c::SafeLoggingComponent, args...)   = Overseer.pool(c.c, args...)
-Base.iterate(c::SafeLoggingComponent, args...)    = iterate(c.c, args...)
-
-function Base.getproperty(c::SafeLoggingComponent, s::Symbol)
-    if s in fieldnames(SafeLoggingComponent)
-        return getfield(c, s)
-    else
-        return getproperty(c.c, s)
-    end
-end
 
 function log(e::Overseer.EntityState, msg::String)
     @debugv 3 begin

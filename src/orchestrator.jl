@@ -217,7 +217,7 @@ end
 function list_servers()
     names = String[]
     for l in values(ORCHESTRATOR[].searchers)
-        for s in l[ServerInfo].data
+        for s in l[ServerInfo]
             s.server ∉ names && push!(names, s.server)
         end
         local_s = local_server()

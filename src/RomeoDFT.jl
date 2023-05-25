@@ -1,31 +1,32 @@
 module RomeoDFT
+using PrecompileTools
 
 using Reexport
-@reexport using DFControl
-import DFControl: Calculation
-@reexport using RemoteREPL
-using RemoteHPC
-using RemoteHPC: @timeout, suppress
-using DFWannier
-using JLD2: JLD2
-using Distances
-using Dates
-using LinearAlgebra
-using EulerAngles
-using ThreadPools
-using LoggingExtras
-using Optim
-using Sockets
-using SnoopPrecompile
-using ProgressMeter
-using PrettyTables
-using TOML
-using TimerOutputs
-using REPL.TerminalMenus
+# @recompile_invalidations begin
+    @reexport using DFControl
+    import DFControl: Calculation
+    @reexport using RemoteREPL
+    using RemoteHPC
+    using RemoteHPC: @timeout, suppress
+    using DFWannier
+    using JLD2: JLD2
+    using Distances
+    using Dates
+    using LinearAlgebra
+    using EulerAngles
+    using ThreadPools
+    using LoggingExtras
+    using Optim
+    using Sockets
+    using ProgressMeter
+    using PrettyTables
+    using TOML
+    using TimerOutputs
+    using REPL.TerminalMenus
 
-@reexport using Overseer
-using Overseer: AbstractEntity
-
+    @reexport using Overseer
+    using Overseer: AbstractEntity
+# end
 
 const AnglesType         = Angles{Float64,2,DFWannier.MagneticVector{Float64, Vector{Float64}}}
 const ColinMatrixType    = DFW.ColinMatrix{Float64, Matrix{Float64}}
@@ -66,7 +67,7 @@ include("logging.jl")
 export Searcher, connect_orchestrator
 export ground_state, unique_states
 
-# @precompile_all_calls begin
+# @compile_workload begin
 #     tn = tempname()
 #     l = Searcher(tn)
 #     Entity(l, ServerInfo("", "", "", 5))
