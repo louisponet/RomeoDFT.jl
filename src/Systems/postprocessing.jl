@@ -194,7 +194,7 @@ function Overseer.update(::UniqueExplorer, m::AbstractLedger)
     rescomp   = m[Results]
     bandscomp = m[FlatBands]
 
-    @error_capturing for e in @safe_entities_in(m, Pulled && Results && !Unique && !Parent && !Done && !ShouldRerun)
+    @error_capturing for e in @safe_entities_in(m, Pulled && Results && !Unique && !Parents && !Done && !ShouldRerun)
 
         if !e.converged || isempty(e.state.occupations)
             m[e] = Done(false)
