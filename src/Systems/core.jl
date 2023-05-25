@@ -442,17 +442,15 @@ function Overseer.update(::ErrorCorrector, m::AbstractLedger)
             # This results usually because of some server side issue where something crashed for no reason
             # Can also be because things converged before constraints were released (see process_Hubbard)
             if e in m[SimJob]
-                if e.niterations == e.constraining_steps != 0
-                    log(e,
-                        "ErrorCorrector: has converged scf while constraints still applied, increasing Hubbard_conv_thr.")
-                    new_template = deepcopy(m[Template][e])
-                    new_template.calculation[:system][:Hubbard_conv_thr] *= 1.5
-                    should_rerun(m, e, new_template)
-                else
-                    set_flow!(m[SimJob][e].job, "" => true)
-                    should_rerun(m, e)
-                end
+                set_flow!(m[SimJob][e].job, "" => true)
+                should_rerun(m, e)
             end
+        elseif e.constraining_steps == -1
+            log(e,
+                "ErrorCorrector: has converged scf while constraints still applied, increasing Hubbard_conv_thr.")
+            new_template = deepcopy(m[Template][e])
+            new_template.calculation[:system][:Hubbard_conv_thr] *= 1.5
+            should_rerun(m, e, new_template)
         end
     end
 

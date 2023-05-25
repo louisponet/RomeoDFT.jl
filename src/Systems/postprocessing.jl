@@ -79,9 +79,9 @@ function results_from_output(res::Dict, basecase=false)
         try
             out = process_Hubbard(res[:Hubbard])
             if !haskey(res, :Hubbard_iterations) && !basecase
-                minid = res[:scf_iteration][end]
-                mindist = typemax(Float64)
-                state = State()
+                minid = -1
+                mindist = out.mindist
+                state = out.state
             else
                 minid = get(res, :Hubbard_iterations, out.minid)
                 mindist = out.mindist
@@ -196,7 +196,7 @@ function Overseer.update(::UniqueExplorer, m::AbstractLedger)
 
     @error_capturing for e in @safe_entities_in(m, Pulled && Results && !Unique && !Parents && !Done && !ShouldRerun)
 
-        if !e.converged || isempty(e.state.occupations)
+        if !e.converged || e.constraining_steps == -1
             m[e] = Done(false)
             continue
         end
