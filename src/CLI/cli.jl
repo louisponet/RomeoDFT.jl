@@ -342,7 +342,7 @@ module server
     @cast function update(name::String)
         if RemoteHPC.exists(RemoteHPC.Server(name=name))
             #TODO: Print more stuff
-            RemoteHPC.update_RemoteHPC(RemoteHPC.Server(name))
+            RemoteHPC.update(RemoteHPC.Server(name))
             print("Updated Server(\"$name\")")
         else
             @error "No such server"
@@ -403,5 +403,13 @@ configure interactively Servers, Environments, Executables and PseudoSets.
         RemoteHPC.configure()
     end
 end
+
+
+# """
+# Update RomeoDFT to the latest version.
+# """
+# @cast function update()
+    
+# end
 
 @main
