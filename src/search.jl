@@ -294,6 +294,16 @@ function RemoteHPC.load(rootdir::String, l::AbstractLedger)
         end
     end
 
+    # Here we reset all dangling empty pages to be consistent with Overseer.NULL_INT_PAGE
+    # otherwise there are segment faults when checking `in`
+    for (T, c) in components(l)
+        for (p, count) in enumerate(c.indices.counters)
+            if count == 0
+                c.indices.reverse[p] = Overseer.NULL_INT_PAGE
+            end
+        end
+    end
+
     return l
 end
 
@@ -965,6 +975,12 @@ function loop(l::Searcher; verbosity = l.verbosity, sleep_time = l.sleep_time)
     end
     @debug "Stopping loop"
     @info "Stopping all pending and Submitted jobs."
+    stop_pending_jobs(l)
+    l.loop = nothing
+    return l.stop = false
+end
+
+function stop_pending_jobs(l)
     lck = ReentrantLock()
     @sync for e in @entities_in(l, SimJob)
         Threads.@spawn begin
@@ -976,8 +992,6 @@ function loop(l::Searcher; verbosity = l.verbosity, sleep_time = l.sleep_time)
             end
         end
     end
-    l.loop = nothing
-    return l.stop = false
 end
 
 """

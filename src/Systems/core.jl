@@ -275,7 +275,7 @@ function Overseer.update(::JobMonitor, m::AbstractLedger)
             e.current_running = cur_running
 
             # If filesize didn't change for 30min we abort
-            if e.current_runtime > 0.5 * run_check_time && prev_filesize == e.current_filesize
+            if e.current_runtime > run_check_time && prev_filesize == e.current_filesize
                 abort(e.job)
                 for c in e.job.calculations
                     if c.name == cur_running
