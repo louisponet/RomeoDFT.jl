@@ -1055,7 +1055,11 @@ function create_child!(l::AbstractLedger, parent_entity, components...)
         end
     end
 
-    l[ppe] = Parents(Entity(parent_entity))
+    if ppe ∉ l[Parents]
+        l[ppe] = Parents(Entity(parent_entity))
+    else
+        push!(l[ppe][Parents], Entity(parent_entity))
+    end
 
     if ppe ∉ l[Trial]
         l[ppe] = parent_entity in l[Results] && l[Results][parent_entity].converged ?
