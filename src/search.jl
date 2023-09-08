@@ -362,16 +362,18 @@ function setup_structure(structure_file, supercell, primitive)
     atsyms = unique(map(x -> string(x.name), str.atoms))
     choices = request("Select magnetic elements:", MultiSelectMenu(atsyms))
 
-    mag = (1e-5, -1e-5)
-    magcount = 1
-    for c in choices
-        U = RemoteHPC.ask_input(Float64, "Set U for element $(atsyms[c])")
-        for a in filter(x->x.name == Symbol(atsyms[c]), str.atoms)
-            a.dftu.U = U
-            a.magnetization = [0.0, 0.0, mag[mod1(magcount, 2)]]
-            magcount += 1
-        end
-    end
+    if !relax_base  #added for the relax-base to get the starting_mag of the input
+      mag = (1e-5, -1e-5)
+      magcount = 1
+      for c in choices
+          U = RemoteHPC.ask_input(Float64, "Set U for element $(atsyms[c])")
+          for a in filter(x->x.name == Symbol(atsyms[c]), str.atoms)
+              a.dftu.U = U
+              a.magnetization = [0.0, 0.0, mag[mod1(magcount, 2)]]
+              magcount += 1
+          end
+      end
+    end  #added for the relax-base to get the starting_mag of the input
 
     magatsyms = map(x-> Symbol(atsyms[x]), collect(choices))
     sort!(str.atoms, by = x -> x.name in magatsyms ? 0 : typemax(Float64)) 
