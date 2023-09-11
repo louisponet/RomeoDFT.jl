@@ -329,7 +329,8 @@ function setup_scf(scf_file, supercell;
     return calc
 end
 
-function setup_structure(structure_file, supercell, primitive)
+function setup_structure(structure_file, supercell, primitive;
+					 relax_base=false)
     @assert ispath(structure_file) ArgumentError("Structure file not found")
     
     str = splitext(structure_file)[end] == ".in" ?
