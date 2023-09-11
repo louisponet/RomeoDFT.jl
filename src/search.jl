@@ -363,7 +363,7 @@ function setup_scf(scf_file, supercell;
     return calc
 end
 
-function setup_structure(structure_file, supercell, primitive; pseudoset=nothing, U_values=nothing, kwargs...)
+function setup_structure(structure_file, supercell, primitive; pseudoset=nothing, U_values=nothing, use_input_magnetization=false, kwargs...)
     @assert ispath(structure_file) ArgumentError("Structure file not found")
 
     str = splitext(structure_file)[end] == ".in" ?
@@ -405,14 +405,16 @@ function setup_structure(structure_file, supercell, primitive; pseudoset=nothing
         end
         
     end
-    
-    mag = (1e-5, -1e-5)
-    magcount = 1
-    for (atsym, U) in U_values
-        for a in filter(x -> x.name == atsym, str.atoms)
-            a.dftu.U = U
-            a.magnetization = [0.0, 0.0, mag[mod1(magcount, 2)]]
-            magcount += 1
+
+    if !use_input_magnetization
+        mag = (1e-5, -1e-5)
+        magcount = 1
+        for (atsym, U) in U_values
+            for a in filter(x -> x.name == atsym, str.atoms)
+                a.dftu.U = U
+                a.magnetization = [0.0, 0.0, mag[mod1(magcount, 2)]]
+                magcount += 1
+            end
         end
     end
 
@@ -500,6 +502,7 @@ This is the backend method used for the `romeo searcher create` from the command
 - `Hubbard_strength=1.0`: strength of the constraining potential
 - `Hubbard_conv_thr=0.1`: threshold euclidean distance per atom between trial and current occupation matrices after which the constraints are released
 - `electron_maxstep=500`: see QE documentation
+- `use_input_magnetization=false`: will not overwrite the magnetization that was supplied in the structure file
 
 # Pre/Post processing Kwargs:
 - `relax_unique=false`: whether a structural relaxation should be ran on each unique state
@@ -543,7 +546,9 @@ function setup_search(name, scf_file, structure_file = scf_file;
                       hp_nq = (2, 2, 2),
                       hp_conv_thr_chi = 1e-4,
                       hp_find_atpert = 2,
-                      hp_U_conv_thr = 0.1, kwargs...)
+                      hp_U_conv_thr = 0.1,
+                      use_input_magnetization = false,
+                      kwargs...)
     dir = searchers_dir(name)
 
     if ispath(joinpath(dir, string(DATABASE_VERSION), "ledger.jld2"))
@@ -562,7 +567,7 @@ function setup_search(name, scf_file, structure_file = scf_file;
     end
 
     calc = setup_scf(scf_file, supercell; kwargs...)
-    str = setup_structure(structure_file, supercell, primitive; kwargs...)
+    str = setup_structure(structure_file, supercell, primitive; use_input_magnetization=use_input_magnetization, kwargs...)
 
     magats = filter(ismagnetic, str.atoms)
     suppress() do

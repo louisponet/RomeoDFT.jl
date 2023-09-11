@@ -29,6 +29,7 @@ function plot_states(es::Vector, nat::Int, gs;
                      base_marker_strokewidth= 2,
                      p = plot(),
                      kwargs...)
+                     
     main_es = filter(x->FlatBands in x, es) 
     E_conv_fac = 13.6056980659
     labels = Dict("band_distances" => "\n"*L"\eta\:\textrm{(}n, n_{GS}\textrm{)}",
@@ -104,7 +105,7 @@ end
 
 function plot_states(tl::AbstractLedger; unique = false, relaxed = false, unique_thr = 0.1, kwargs...)
     str = tl[Template][1].structure
-    nat = length(str.atoms)
+    nat = length(filter(ismagnetic, str.atoms))
     
     if unique
         es = collect(@entities_in(tl, Unique && Results && FlatBands && !Simulation))

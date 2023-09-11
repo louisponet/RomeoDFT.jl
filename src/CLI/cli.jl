@@ -132,12 +132,7 @@ module searcher
     - `scf_file`: template QE scf file for input parameters
 
     # Options
-    
-    - `--structure-file, -s`: CIF or QE input where to take the structure from. Defalts to `scf_file`
-    - `--primitive`: set this to true to first try to find the primitive unit cell
-    - `--supercell-a=<1>`: number specifying the number of unit cells along `a` direction
-    - `--supercell-b=<1>`: number specifying the number of unit cells along `b` direction
-    - `--supercell-c=<1>`: number specifying the number of unit cells along `c` direction
+
     - `--verbosity=<0>`: the logging verbosity, higher = more
     - `--sleep-time=<30>`: time in seconds between updates of the searcher
     - `--nrand=<10>`: how many random trials should be performed in a random search generation
@@ -150,6 +145,12 @@ module searcher
     - `--Hubbard-strength=<1.0>`: strength of the constraining potential
     - `--Hubbard-conv-thr=<0.1>`: threshold euclidean distance per atom between trial and current occupation matrices after which the constraints are released
     - `--electron-maxstep=<500>`: see QE documentation
+    - `--structure-file, -s`: CIF or QE input where to take the structure from. Defalts to `scf_file`
+    - `--primitive`: set this to true to first try to find the primitive unit cell
+    - `--supercell-a=<1>`: number specifying the number of unit cells along `a` direction
+    - `--supercell-b=<1>`: number specifying the number of unit cells along `b` direction
+    - `--supercell-c=<1>`: number specifying the number of unit cells along `c` direction
+    - `--use-input-magnetization`: if set it will not overwrite the magnetizations that were provided in the structure input file
     - `--relax-unique=<false>`: whether a structural relaxation should be ran on each unique state
     - `--relax-base=<false>`: whether a relaxation should be ran so the search happens for the relaxed structure
     - `--relax-force-convergence-threshold=<1e-3>`: `forc_conv_thr` in QE
@@ -173,6 +174,7 @@ module searcher
                           supercell_a::Int = 1,
                           supercell_b::Int = 1,
                           supercell_c::Int = 1,
+                          use_input_magnetization::Bool=false,
                           verbosity::Int = 0,
                           sleep_time::Float64 = 30.0,
                           nrand::Int = 10,
@@ -200,7 +202,8 @@ module searcher
                           hp_nq3::Int = 2,
                           hp_conv_thr_chi::Float64 = 1e-6,
                           hp_find_atpert::Int = 1,
-                          hp_U_conv_thr::Float64 = 0.1)
+                          hp_U_conv_thr::Float64 = 0.1,
+                          )
                           
         l = setup_search(name, abspath(scf_file.content), abspath(structure_file.content);
                       primitive              = primitive,
@@ -229,7 +232,8 @@ module searcher
                       hp_nq           = (hp_nq1, hp_nq2, hp_nq3),
                       hp_conv_thr_chi = hp_conv_thr_chi,
                       hp_find_atpert  = hp_find_atpert,
-                      hp_U_conv_thr   = hp_U_conv_thr)
+                      hp_U_conv_thr   = hp_U_conv_thr,
+                      use_input_magnetization = use_input_magnetization)
         return orchestrator_submit(l; verbosity=verbosity)
     end
 
