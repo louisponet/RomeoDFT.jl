@@ -1,7 +1,7 @@
 name = "RomeoDFT"
 uuid = "87c4fabc-abb4-4467-86a6-1748b5c259fe"
 authors = ["Louis Ponet<louisponet@epfl.ch>", "and contributors"]
-version = "0.2.6"
+version = "0.2.7"
 
 [deps]
 Comonicon = "863f3e99-da2a-4334-8734-de3dacbe5542"
@@ -32,8 +32,8 @@ UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 
 [compat]
 Comonicon = "^1.0.4"
-DFControl = "^0.5.21"
-DFWannier = "^0.2.1"
+DFControl = "^0.6.0"
+DFWannier = "^0.2.3"
 Distances = "^0.10.7"
 EulerAngles = "^0.1.0"
 JLD2 = "^0.4.29"
