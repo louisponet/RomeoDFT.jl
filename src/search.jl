@@ -367,7 +367,7 @@ function setup_structure(structure_file, supercell, primitive; pseudoset=nothing
     @assert ispath(structure_file) ArgumentError("Structure file not found")
 
     str = splitext(structure_file)[end] == ".in" ?
-          DFC.FileIO.qe_parse_calculation(structure_file)[end] :
+          DFC.FileIO.qe_parse_calculation(structure_file).structure :
           Structure(structure_file)
     str = primitive ? Structures.find_primitive(str) : str
 
