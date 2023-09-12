@@ -406,15 +406,15 @@ function setup_structure(structure_file, supercell, primitive; pseudoset=nothing
         
     end
 
-    if !use_input_magnetization
-        mag = (1e-5, -1e-5)
-        magcount = 1
-        for (atsym, U) in U_values
-            for a in filter(x -> x.name == atsym, str.atoms)
-                a.dftu.U = U
+    mag = (1e-5, -1e-5)
+    magcount = 1
+    for (atsym, U) in U_values
+        for a in filter(x -> x.name == atsym, str.atoms)
+            a.dftu.U = U
+            if !use_input_magnetization
                 a.magnetization = [0.0, 0.0, mag[mod1(magcount, 2)]]
-                magcount += 1
             end
+            magcount += 1
         end
     end
 
