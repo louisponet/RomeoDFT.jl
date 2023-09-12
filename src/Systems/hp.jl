@@ -86,6 +86,7 @@ function setup_scf_for_hp!(m, e, o, insulating_from_hp=false)
             scf_calc[:nbnd] = n_ks
             scf_calc[:startingpot] = "file"
             scf_calc[:startingwfc] = "file"
+            scf_calc[:restart_mode] = "restart"
             delete!(scf_calc, :degauss)
             delete!(scf_calc, :smearing)
         end
@@ -93,6 +94,10 @@ function setup_scf_for_hp!(m, e, o, insulating_from_hp=false)
         for a in e.job.structure.atoms
             a.magnetization = [0,0,0]
         end
+    end
+
+    if any(x -> DFControl.Calculations.isvcrelax(x), e.job.calculations)
+        scf_calc[:restart_mode] = "restart"
     end
     
     insert!(e.job.calculations, length(e.job.calculations), scf_calc)
