@@ -42,6 +42,11 @@ function Overseer.update(::JobCreator, m::AbstractLedger)
                                                                                        e.structure)
             end
 
+            if e in m[Intersection]
+                scf_calc[:system][:Hubbard_conv_thr] = 1e-12
+                scf_calc[:system][:Hubbard_maxstep] = 10000
+            end
+
             if e in m[SCFSettings]
                 for (f, v) in e.replacement_flags
                     if v isa Dict
@@ -445,7 +450,7 @@ function Overseer.update(::ErrorCorrector, m::AbstractLedger)
                 set_flow!(m[SimJob][e].job, "" => true)
                 should_rerun(m, e)
             end
-        elseif e.constraining_steps == -1
+        elseif e.constraining_steps == -1 && !(e in m[Intersection])
             log(e,
                 "ErrorCorrector: has converged scf while constraints still applied, increasing Hubbard_conv_thr.")
             new_template = deepcopy(m[Template][e])

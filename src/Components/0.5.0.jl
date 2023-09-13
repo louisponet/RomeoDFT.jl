@@ -13,7 +13,6 @@ import ..RomeoDFT: gencalc, State
     Trial
 Holds the trial [`State`](@ref), i.e. where the system will be constrained towards and the origin of the state i.e. from random trials or other generating method.
 """
-
 @component struct Trial
     state::State{Float64, DFWannier.MagneticVector{Float64, Vector{Float64}}, DFWannier.ColinMatrix{Float64, Matrix{Float64}}}
     origin::TrialOrigin

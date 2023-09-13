@@ -43,7 +43,8 @@ include("states.jl")
 const StateType = State{Float64, MagneticVectorType, ColinMatrixType}
 
 include("jobs.jl")
-@enum TrialOrigin RandomMixed EulerAngleMixed LinearMixed PostProcess IntersectionMixed Unknown 
+
+@enum TrialOrigin RandomMixed EulerAngleMixed LinearMixed PostProcess IntersectionMixed ModelOptimized Unknown 
 @enum MixingMode RandomMixing EulerAngleMixing LinearMixing UnknownMixing
 
 include("components.jl")
@@ -55,6 +56,7 @@ include("Systems/intersection.jl")
 include("Systems/structural.jl")
 include("Systems/electrides.jl")
 include("Systems/hp.jl")
+include("Systems/model.jl")
 include("stages.jl")
 include("orchestrator.jl")
 include("client.jl")

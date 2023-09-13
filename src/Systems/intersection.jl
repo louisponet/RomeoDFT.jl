@@ -10,25 +10,34 @@ function Overseer.prepare(i::Intersector, m::AbstractLedger)
     end
 end
 
+# TODO: Think about whether we need all the max number of intersection per generation etc
 function Overseer.update(::Intersector, m::AbstractLedger)
     lck = ReentrantLock()
     gencomp = m[Generation]
+    
     unique_es = collect(@entities_in(m, Unique && Results))
+
+    # The reason for this weirdness is that like this we only have to iterate over
+    # m[Generation] once (calling intersections_per_generation = zeros(Int, maximum_generation(m)) would
+    # be already a full iteration)
     intersections_per_generation = Int[]
     tgen = 0
     for g in @entities_in(m[Generation])
         if g.generation == 0
             continue
         end
-        curlen = length(intersections_per_generation)
-        if g.generation > curlen
-            if g.generation - 1 > curlen
-                append!(intersections_per_generation, zeros(Int, g.generation - 1 - curlen))
+        cur_maxgen = length(intersections_per_generation)
+        if g.generation > cur_maxgen
+            if g.generation - 1 > cur_maxgen
+                append!(intersections_per_generation, zeros(Int, g.generation - 1 - cur_maxgen))
             end
+
+            # This are pending intersections i.e. calculations that haven't ran yet
             if !(g in m[Unique]) && !(g in m[Done]) && !(g in m[Error])
                 push!(intersections_per_generation, 1)
             end
         else
+            # This are pending intersections i.e. calculations that haven't ran yet
             if !(g in m[Unique]) && !(g in m[Done]) && !(g in m[Error])
                 intersections_per_generation[g.generation] += 1
             end
@@ -94,32 +103,34 @@ function Overseer.update(::Intersector, m::AbstractLedger)
                         
                     ilock = ReentrantLock() 
                     Threads.@threads for e2 in others
-                        tstate = 0.5*(e1.state + e2.state)
+                        for α in (0.25, 0.5, 0.75)
+                            tstate = α *(e1.state + e2.state)
 
-                        # Find closest prev unique
-                        dist, minid = findmin(x -> Euclidean()(x.state, tstate), unique_es)
-                        sink = unique_es[minid]
-                        trial_to_sink = Euclidean()(sink.state, tstate)
-                        if trial_to_sink > mindist
-                            # from this unique, find all prev trials that led to it
-                            funnel = filter(x -> x in m[Trial] && sink.e != x.e && !isempty(x.state.occupations) && Euclidean()(x.state, sink.state) < 1e-2, @entities_in(m, Results))
+                            # Find closest prev unique
+                            dist, minid = findmin(x -> Euclidean()(x.state, tstate), unique_es)
+                            sink = unique_es[minid]
+                            trial_to_sink = Euclidean()(sink.state, tstate)
+                            if trial_to_sink > mindist
+                                # from this unique, find all prev trials that led to it
+                                funnel = filter(x -> x.origin != IntersectionMixed && sink.e != x.e && !isempty(x.state.occupations) && Euclidean()(x.state, sink.state) < 1e-2, @entities_in(m, Results && Trial))
 
-                            # We test that all prev trials in funnel are further than mindist
-                            # and that the distance to all prev trials is larger than towards the sink
-                            # Very crude only distance based determination of funnel
-                            test = all(funnel) do t
-                                fstate = m[Trial][t].state
-                                funnel_to_sink = Euclidean()(sink.state, fstate)
-                                trial_to_funnel = Euclidean()(tstate, fstate)
-                                return trial_to_funnel > mindist && trial_to_funnel > funnel_to_sink
-                            end
-                        
-                            if test
-                                lock(ilock)
-                                try
-                                    push!(intersections, (dist, Trial(tstate, IntersectionMixed), Intersection(e1.e, e2.e)))
-                                finally
-                                    unlock(ilock)
+                                # We test that all prev trials in funnel are further than mindist
+                                # and that the distance to all prev trials is larger than towards the sink
+                                # Very crude only distance based determination of funnel
+                                test = all(funnel) do t
+                                    fstate = m[Trial][t].state
+                                    funnel_to_sink = Euclidean()(sink.state, fstate)
+                                    trial_to_funnel = Euclidean()(tstate, fstate)
+                                    return trial_to_funnel > mindist && trial_to_funnel > funnel_to_sink
+                                end
+                            
+                                if test
+                                    lock(ilock)
+                                    try
+                                        push!(intersections, (dist, Trial(tstate, IntersectionMixed), Intersection(e1.e, e2.e)))
+                                    finally
+                                        unlock(ilock)
+                                    end
                                 end
                             end
                         end
