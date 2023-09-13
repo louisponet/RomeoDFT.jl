@@ -110,14 +110,15 @@ function Overseer.update(::ModelTrainer, m::AbstractLedger)
 
     trainer_settings = m[TrainerSettings][1]
     
-    prev_model = m[Model][end]
+    prev_model = isempty(m[Model]) ? nothing : m[Model][end]
     
     n_points = length(m[Unique]) + length(m[Intersection])
     
-    if n_points - prev_model.n_points > trainer_settings.n_points_per_training
+    if prev_model === nothing || n_points - prev_model.n_points > trainer_settings.n_points_per_training
         data_train = prepare_data(m)
 
-        prev_chain = prev_model.chain
+        prev_chain = prev_model === nothing ? nothing : prev_model.chain
+        
         if prev_chain !== nothing
     
             chain = sample(prev_model.chain, total_energy(data_train) | (;y=data_train.energies), trainer_settings.sampler, trainer_settings.n_samples_per_training)
