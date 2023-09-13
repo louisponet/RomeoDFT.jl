@@ -119,9 +119,10 @@ function Overseer.update(::HPProcessor, m::AbstractLedger)
                 if setup_scf_for_hp!(m, e, o, true)
                     log(e, "HP: Fermi level shift 0. Creating insulating, 2 step HP job")
                     # Nothing to pop since we just want to rerun starting from the new scf
-
-                    # This is to make sure that the last structure is used e.g. when we're vcrelaxing the base case
-                    e.job.structure = deepcopy(m[Template][e].structure)
+                    if RelaxResults in m && e in m[RelaxResults]
+                        # This is to make sure that the last structure is used e.g. when we're vcrelaxing the base case
+                        Structures.update_geometry!(e.job.structure, m[RelaxResults][e].final_structure)
+                    end
                     should_rerun(m, e)
                 else
                     m[e] = Error(e, "Couldn't generate insulating scf for HP")
@@ -151,7 +152,10 @@ function Overseer.update(::HPProcessor, m::AbstractLedger)
             if setup_scf_for_hp!(m, e, o)
                 log(e, "HP failed, creating a scf to run before it and try again")
                 # This is to make sure that the last structure is used e.g. when we're vcrelaxing the base case
-                e.job.structure = deepcopy(m[Template][e].structure)
+                if RelaxResults in m && e in m[RelaxResults]
+                    # This is to make sure that the last structure is used e.g. when we're vcrelaxing the base case
+                    Structures.update_geometry!(e.job.structure, m[RelaxResults][e].final_structure)
+                end
                 should_rerun(m, e)
                 
             elseif e ∉ m[Rerun]
