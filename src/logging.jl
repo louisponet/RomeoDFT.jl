@@ -91,7 +91,7 @@ Overseer.npools(c::SafeLoggingComponent, args...) = Overseer.npools(c.c, args...
 Overseer.pools(c::SafeLoggingComponent)           = Overseer.pools(c.c)
 Overseer.pool(c::SafeLoggingComponent, args...)   = Overseer.pool(c.c, args...)
 
-function log(e::Overseer.EntityState, msg::String)
+function log(e::Overseer.EntityState, msg::AbstractString)
     @debugv 3 begin
         stmsg = process_stacktrace()
         debmsg = "$stmsg: $(e.e) -- $msg"
@@ -104,3 +104,4 @@ function log(e::Overseer.EntityState, msg::String)
     logc = e.components[1].lc
     push!(logc[e.e].logs, "$(now()) -- $msg")
 end
+log(m::Searcher, e::AbstractEntity, msg::AbstractString) = log(m[e], msg)
