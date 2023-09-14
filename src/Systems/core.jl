@@ -583,6 +583,17 @@ end
 
 function Overseer.update(::Stopper, m::AbstractLedger)
 
+    # Stop if basecase failed
+    base_e = entity(m[BaseCase], 1)
+    youngest = youngest_child(m, base_e)
+
+    if youngest in m[Error]
+        @warn "Basecase errored, stopping searcher..."
+        m.stop = true
+        m.finished = true
+        return 
+    end
+
     # Handle cleanup stopping
     if m.mode == :cleanup
         entities_to_clean = @entities_in(m, SimJob && !Submit && !Error)
