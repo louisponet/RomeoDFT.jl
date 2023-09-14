@@ -65,29 +65,23 @@ function prepare_data(l::Searcher)
     states = map(x->x.state, conv_res)
     energies = map(x->x.total_energy - base_energy, conv_res)
     energies .*= 13.6
-    
     occupations = map(x->x.occupations, states)
-    E_Us = map(occ-> sum(m -> E_U(view(m, Up()), U) + E_U(view(m, Down()), U), occ), occupations)
-    magmoms_squared_sum = map(x->sum(y-> y^2, x.magmoms), states)
-    diag_occs = map(occs->map(x->hcat(diag(view(x, Up())), diag(view(x, Down()))), occs), occupations)
-    diag_occupations_sum = map(occ -> sum(x-> (diag(view(x, Up())) .+ diag(view(x, Down()))), occ), occupations)
-    diag_occupations_squared_sum = [d.^2 for d in diag_occupations_sum]
-    return (; magmoms_squared_sum, diag_occs, E_Us, energies, states, diag_occupations_sum, diag_occupations_squared_sum)
+    return (; energies, prepare_data(occupations, U)...)
 end
 
 # TODO duplicate code
 function prepare_data(occs, U)
-    magmoms = map(occupations) do occupation
+    magmoms = map(occs) do occupation
         map(occupation) do occ
             tr(view(occ, Up())) - tr(view(occ, Down())) 
         end
     end
-    magmoms_squared_sum = map(magmom -> sum(m-> m^2, magmom), magmoms)
-    E_Us = map(occ-> sum(m -> E_U(view(m, Up()), U) + E_U(view(m, Down()), U), occ), occupations)
-    diag_occs = map(occs->map(x->hcat(diag(view(x, Up())), diag(view(x, Down()))), occs), occupations)
-    diag_occupations_sum = map(occ -> sum(x-> (diag(view(x, Up())) .+ diag(view(x, Down()))), occ), occupations)
-    diag_occupations_squared_sum = [d.^2 for d in diag_occupations_sum]
-    return (; magmoms_squared_sum, diag_occupations_sum, E_Us, diag_occupations_squared_sum, diag_occs)
+    magmoms_squared_sum   = map(magmom -> sum(m -> m^2, magmom), magmoms)
+    E_Us                  = map(occ -> sum(m -> E_U(view(m, Up()), U) + E_U(view(m, Down()), U), occ), occs)
+    diag_occs             = map(occ -> map(x -> hcat(diag(view(x, Up())), diag(view(x, Down()))), occ), occs)
+    diag_occs_sum         = map(occ -> sum(x -> (diag(view(x, Up())) .+ diag(view(x, Down()))), occ), occs)
+    diag_occs_squared_sum = [d.^2 for d in diag_occs_sum]
+    return (; magmoms_squared_sum, diag_occs_sum, E_Us, diag_occs_squared_sum, diag_occs)
 end
 
 @model function total_energy(data, ::Type{T}=Float64) where {T}
@@ -133,7 +127,7 @@ function Overseer.update(::ModelTrainer, m::AbstractLedger)
     prev_model = isempty(m[Model]) ? nothing : m[Model][end]
     
     n_points = length(m[Unique]) + length(m[Intersection])
-    
+
     if prev_model === nothing || n_points - prev_model.n_points > trainer_settings.n_points_per_training
         data_train = prepare_data(m)
 
@@ -167,24 +161,46 @@ function occ2x(occ)
     return vcat(eigen_vals, angles)
 end
 
-function x2occ(x)
-    vals = x[1:10]
-    up_angles = Angles(x[11:20])
-    down_angles = Angles(x[21:30])
-    up_vecs = Matrix(up_angles)
-    down_vecs = Matrix(down_angles)
-    up_occ = Matrix(Eigen(vals[1:5], up_vecs))
-    down_occ = Matrix(Eigen(vals[6:10], down_vecs))
-    occs = ColinMatrix(hcat(up_occ, down_occ))
+
+# flat vector in + leading dimension (e.g. 5 for d orbitals)
+# [dim up eigvals; dim down eigvals; (dim * (dim-1))/2 angles up; (dim * (dim-1))/2 angles down; etc next atoms;...]  
+function eigvals_angles2occ(eigvals_angles::Vector, dim::Int)
+    n_vals_per_at = 2 * dim + dim * (dim - 1)
+
+    up_vals_r = 1:dim
+    dn_vals_r = up_vals_r[end] + 1:2dim
+
+    up_angles_r = dn_vals_r[end] + 1:dn_vals_r[end] + div(dim * (dim - 1), 2)
+    dn_angles_r = up_angles_r[end] + 1:up_angles_r[end] + div(dim * (dim - 1), 2)
+    
+    return @views map(1:n_vals_per_at:length(eigvals_angles)) do start
+    
+        all_vals = eigvals_angles[start:start+n_vals_per_at-1]
+
+        up_vals = all_vals[up_vals_r]
+        dn_vals = all_vals[dn_vals_r]
+
+        up_angles = Angles(all_vals[up_angles_r])
+        dn_angles = Angles(all_vals[dn_angles_r])
+        
+        up_vecs = Matrix(up_angles)
+        dn_vecs = Matrix(dn_angles)
+        up_occ = Matrix(Eigen(up_vals, up_vecs))
+        dn_occ = Matrix(Eigen(dn_vals, dn_vecs))
+        occs = ColinMatrix(hcat(up_occ, dn_occ))
+    end
 end
 
-function model_diag(model, func, U, x; use_penalty=false)
-    @assert size(x, 1) == 30
-    occs = [x2occ(x)] # for now we have one atom
+function model_diag(model, func, U, eigvals_angles::Vector; use_penalty=false)
+
+    occs = eigvals_angles2occ(eigvals_angles) # for now we have one atom
     data = prepare_data([occs], U)
+    
+    @assert size(eigvals_angles, 1) == 30
+    
     ys = func(model.α, model.Jh, model.C, model.constant_shift, data, Float64)
     if use_penalty
-        eigenvals = x[1:10]
+        eigenvals = eigvals_angles[1:10]
         penalty =  1e2 * sum(@. (max(0, eigenvals-1) + max(0, -eigenvals)))
         ys += penalty
     end
@@ -199,7 +215,7 @@ function optimize_cg(x0, model_diag, lower, upper)
         Fminbox(ConjugateGradient(; linesearch= LineSearches.BackTracking())),
         Optim.Options(iterations=100, outer_iterations=10, show_trace=true))
     x_min = minimizer(res);
-    return x2occ(x_min);
+    return eigvals_angles2occ(x_min);
 end
 
 function optimize_sa(x0, model_diag, lower, upper)
@@ -214,10 +230,9 @@ function optimize_sa(x0, model_diag, lower, upper)
         Optim.Options(iterations=10^6, show_trace=true)
     )
     x_min = minimizer(res);
-    return x2occ(x_min);
+    return eigvals_angles2occ(x_min);
 end
 
-function optimize_sa(x0, model_diag, lower, upper)
 # @pooled_component Base.@kwdef struct OptimizeSettings
 #     opts::Vector{Optimizer}
 #     opt_options::Vector{Dict}
@@ -232,12 +247,12 @@ function Overseer.update(::ModelOptimizer, m::AbstractLedger)
     # if no model yet, skip
     model = isempty(m[Model]) ? nothing : m[Model][end]
     model === nothing && return
+    
     U = DFC.getfirst(x->x.dftu.U != 0, m[Template][1].structure.atoms).dftu.U
-    model_diag(x) = model_diag(model, on_site_energy, U, x)
 
     # check how many calcs are pending on server
     # if free room -> generate some more calcs with the current model
-    n_current_simjobs   = length(@entities_in(m, SimJob && !Error))
+    n_current_simjobs   = length(@entities_in(m, SimJob && !Error && !Done))
     max_concurrent_jobs = sum(x -> Server(x.server).max_concurrent_jobs, m[ServerInfo])
     max_new             = max_concurrent_jobs - n_current_simjobs
     max_new <= 0 && return 
@@ -262,10 +277,11 @@ function Overseer.update(::ModelOptimizer, m::AbstractLedger)
     while max_new > 0
         # random start
         x0 = rand(natoms * nshell) # TODO slightly better random?
-        occ = optimize_cg(x0, model_diag, lower, upper)
+        occ = optimize_cg(x0, x -> model_diag(x, on_site_energy, U, x), lower, upper)
         state0 = State(occ)
-        distances = map(e->Euclidean()(e[Results].state, state0), unique_states)
-                  ∪ map(e->Euclidean()(e[Trial].state, state0), pending_states)
+        distances = map(e->Euclidean()(e[Results].state, state0), unique_states) ∪
+                    map(e->Euclidean()(e[Trial].state, state0), pending_states)
+                    
         if minimum(distances; init=Inf) < dist_thr
             continue
         end
@@ -280,6 +296,3 @@ function Overseer.update(::ModelOptimizer, m::AbstractLedger)
     end
 
 end
-
-
-
