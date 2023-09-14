@@ -233,6 +233,12 @@ function optimize_sa(x0, model_diag, lower, upper)
     return eigvals_angles2occ(x_min);
 end
 
+@pooled_component Base.@kwdef mutable struct SystemInfo
+    max_running_calcs::Int
+    n_running_calcs::Int = 0
+    n_pending_calcs::Int = 0
+end
+
 # @pooled_component Base.@kwdef struct OptimizeSettings
 #     opts::Vector{Optimizer}
 #     opt_options::Vector{Dict}
@@ -259,7 +265,7 @@ function Overseer.update(::ModelOptimizer, m::AbstractLedger)
  
     # find previous unique, intersection, other trials about to run
     # to check whether it's duplication
-    unique_states = @entities_in(m, (Unique || Intersection) && Results)
+    unique_states = @entities_in(m, Unique && Results)
     pending_states = @entities_in(m, SimJob && Submit)
 
     # Generate Trial with origin ModelOptimized + increment generation
@@ -286,13 +292,66 @@ function Overseer.update(::ModelOptimizer, m::AbstractLedger)
             continue
         end
         trial = Trial(state0, RomeoDFT.ModelOptimized) # TODO other tag?
-        calc = deepcopy(m[BaseCase][1].calculation)
-        calc[:system][:Hubbard_occupations] = generate_Hubbard_occupations(trial.state, strc)
         gen = Generation(curgen + 1) # TODO this is wrong
 
         # add new entity with optimized occ
-        new_e = Entity(m, trial, calc, gen) 
+        new_e = Entity(m, trial, gen) 
         max_new -= 1
     end
 
 end
+
+## Save for later
+# abstract type AbstractSettings end
+# @component struct HighLevelSettings <: AbstractSettings
+#     #
+#     #
+#     # 
+# end
+
+# @component struct HighLevelResults
+# end
+
+# result_comp(::Type{HighLevelSettings}) = HighLevelResults
+
+# struct HighLevel <: System end
+
+# function Overseer.update(::HighLevel, l::Searcher)
+    
+#     for e in @entities_in(l, HighLevelSettings)
+        
+#         if !(e in l[SCFSettings])
+#             l[e] = SCFSettings(e.create_scf_settings)
+#         elseif e in l[SCFSettings] && e in l[Results] && !(e in l[NSCFSettings])
+#             # do something with e
+#             l[e] = NSCFSettings(e.create_nscf_settings)
+#         elseif e in l[NSCFSettings] && e in l[NSCFResults] && !(e in l[BandsSettings])
+#             # do something with nscf output
+#             l[e] = BandsSettings(e.create_bands_settings)
+#         elseif e in l[BandsResults]
+#             l[e] = HighLevelResults(x, y, z)
+#         end
+#     end
+# end
+
+# struct DoneChecker <: System end
+
+# function Overseer.update(::DoneChecker, l::Searcher)
+#     dones = Dict()
+#     done_c = l[Done]
+#     for c in components(l, AbstractSettings)
+#         done_comp = l[result_comp(eltype(c))]
+
+#         for e in @entities_in(c && !done_c)
+#             dones[Entity(e)] = get!(dones, Entity(e), true) && e in done_comp
+#         end
+#     end
+
+#     for (e, d) in dones
+#         if d
+#             done_c[e] = Done(false)
+#         end
+#     end
+# end
+
+    
