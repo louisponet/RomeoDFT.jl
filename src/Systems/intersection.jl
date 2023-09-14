@@ -198,7 +198,7 @@ function Overseer.update(::RandomTrialGenerator, m::AbstractLedger)
     end
     # First make sure the base case calculation is finished
     base_e = entity(m[BaseCase], 1)
-    if isempty(m[BaseCase]) || !all_children_done(m, base_e) || base_e ∉ m[Results]
+    if isempty(m[BaseCase]) || !all_children_done(m, base_e) || base_e ∉ m[Results] || base_e in m[Error]
         return
     end
     
