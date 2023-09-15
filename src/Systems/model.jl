@@ -183,25 +183,25 @@ function eigvals_angles2occ(eigvals_angles::Vector, dim::Int)
         up_vals = all_vals[up_vals_r]
         dn_vals = all_vals[dn_vals_r]
 
-        up_angles = Angles(all_vals[up_angles_r])
-        dn_angles = Angles(all_vals[dn_angles_r])
+        up_angles = Angles(all_vals[up_angles_r], 1.0,(5,5))
+        dn_angles = Angles(all_vals[dn_angles_r], 1.0, (5,5))
         
         up_vecs = Matrix(up_angles)
         dn_vecs = Matrix(dn_angles)
         up_occ = Matrix(Eigen(up_vals, up_vecs))
         dn_occ = Matrix(Eigen(dn_vals, dn_vecs))
-        occs = ColinMatrix(hcat(up_occ, dn_occ))
+        occs = DFWannier.ColinMatrix(hcat(up_occ, dn_occ))
     end
 end
 
 function model_diag(model, func, U, eigvals_angles::Vector; use_penalty=false)
 
-    occs = eigvals_angles2occ(eigvals_angles) # for now we have one atom
+    occs = eigvals_angles2occ(eigvals_angles, 5) # for now we have one atom
     data = prepare_data([occs], U)
     
     @assert size(eigvals_angles, 1) == 30
     
-    ys = func(model.α, model.Jh, model.C, model.constant_shift, data, Float64)
+    ys = func(model.α, model.Jh, model.C, model.constant_shift, data, Float64)[1]
     if use_penalty
         eigenvals = eigvals_angles[1:10]
         penalty =  1e2 * sum(@. (max(0, eigenvals-1) + max(0, -eigenvals)))
@@ -218,7 +218,7 @@ function optimize_cg(x0, model_diag, lower, upper)
         Fminbox(ConjugateGradient(; linesearch= LineSearches.BackTracking())),
         Optim.Options(iterations=100, outer_iterations=10, show_trace=true))
     x_min = minimizer(res);
-    return eigvals_angles2occ(x_min);
+    return eigvals_angles2occ(x_min, 5);
 end
 
 function optimize_sa(x0, model_diag, lower, upper)
@@ -263,7 +263,7 @@ function Overseer.update(::ModelOptimizer, m::AbstractLedger)
     # find previous unique, intersection, other trials about to run
     # to check whether it's duplication
     unique_states = @entities_in(m, Unique && Results)
-    pending_states = @entities_in(m, SimJob && Submit)
+    pending_states = @entities_in(m, SimJob && Submit && Trial)
 
     # Generate Trial with origin ModelOptimized + increment generation
     # Severely limit the amount of new intersections, maybe only 6 per generation or whatever
@@ -279,8 +279,8 @@ function Overseer.update(::ModelOptimizer, m::AbstractLedger)
     # TODO multithreading
     while max_new > 0
         # random start
-        x0 = rand(natoms * nshell) # TODO slightly better random?
-        occ = optimize_cg(x0, x -> model_diag(x, on_site_energy, U, x), lower, upper)
+        x0 = rand(30) # TODO slightly better random?
+        occ = optimize_cg(x0, x -> model_diag(model, on_site_energy, U, x), lower, upper)
         state0 = State(occ)
         distances = map(e->Euclidean()(e[Results].state, state0), unique_states) ∪
                     map(e->Euclidean()(e[Trial].state, state0), pending_states)
