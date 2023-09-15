@@ -147,6 +147,17 @@ end
     replacement_flags::Dict
 end
 
+@pooled_component Base.@kwdef mutable struct RelaxSettings <: PostProcessSettings 
+    force_convergence_threshold::Float64  = 1e-3
+    energy_convergence_threshold::Float64 = 1e-4
+    ion_dynamics::String                  = "bfgs"
+    cell_dynamics::String                 = "bfgs"
+    symmetry::Bool                        = true
+    variable_cell::Bool                   = true
+end
+
+Base.convert(::Type{RelaxSettings}, x::v0_1.RelaxSettings) = RelaxSettings(x.force_convergence_threshold, x.energy_convergence_threshold, x.ion_dynamics, x.cell_dynamics, x.symmetry, x.variable_cell)
+
 """
     RelaxResults
 

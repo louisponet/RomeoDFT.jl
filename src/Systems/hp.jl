@@ -189,6 +189,10 @@ function Overseer.update(::HPProcessor, m::AbstractLedger)
                         rm(joinpath(e.local_dir, f))
                     end
                 end
+                if RelaxResults in m && e in m[RelaxResults]
+                    # This is to make sure that the last structure is used e.g. when we're vcrelaxing the base case
+                    Structures.update_geometry!(new_template.structure, m[RelaxResults][e].final_structure)
+                end
                 should_rerun(m, e, new_template)
             elseif any(x->x[3] > e.U_max, hub_ats)
                 m[e] = Error(e, "HP U above $(e.U_max), stopping the cycle.")
