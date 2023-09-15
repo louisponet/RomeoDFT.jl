@@ -29,27 +29,26 @@ end
 function on_site_energy(γ, β, C, constant_shift, data, T)    
     magmoms_squared_sum = data.magmoms_squared_sum
     Eu = data.E_Us
-    diag_occupations = data.diag_occs
-    diag_occupations_sum = data.diag_occupations_sum
-    diag_occupations_squared_sum = data.diag_occupations_squared_sum
+    diag_occs = data.diag_occs
+    diag_occs_sum = data.diag_occs_sum
+    diag_occs_squared_sum = data.diag_occs_squared_sum
 
-    natoms = Int(length(diag_occupations_squared_sum[1]) / length(C))
+    natoms = Int(length(diag_occs_squared_sum[1]) / length(C))
 
     etot = zeros(T, length(magmoms_squared_sum))
     @inbounds for i = 1:length(magmoms_squared_sum)
         m = magmoms_squared_sum[i]
-        diag_occ_square = diag_occupations_squared_sum[i]
-        diag_occ_sum = diag_occupations_sum[i]
-        diag_occ = diag_occupations[i]
+        diag_occ_square = diag_occs_squared_sum[i]
+        diag_occ_sum = diag_occs_sum[i]
+        diag_occ = diag_occs[i]
         Eu_ = Eu[i]  # +U energy
         Eh = E_hund_exchange(diag_occ, γ)         # Hund's exchange
-        
         Ecf = sum(y->y[1] * y[2], zip(diag_occ_square, repeat(C, natoms)))
         
         E_colombic = - β * sum(diag_occ_sum)       # e-N interactions
         etot[i] = Eh + Ecf + Eu_ + E_colombic
     end
-    return etot + constant_shift * length(C)
+    return etot .+ constant_shift * length(C)
 end
 
 function prepare_data(l::Searcher)
@@ -58,7 +57,7 @@ function prepare_data(l::Searcher)
     
     nmagats = length(filter(ismagnetic, l[Template][1].structure.atoms))
     
-    U = DFC.getfirst(x->x.dftu.U != 0, l[Template][1].structure.atoms).dftu.U
+    U = getfirst(x->x.dftu.U != 0, l[Template][1].structure.atoms).dftu.U
     
     conv_res = @entities_in(l, Results && Unique)
     
@@ -89,7 +88,7 @@ end
     α ~ truncated(Normal(0, 2); lower = 0)
     # α ~ truncated(Normal(0, 2); lower = 0)
     Jh ~ truncated(Normal(0, 2); lower = 0)
-    n = size(data.diag_occs[1], 1)
+    n = size(data.diag_occs[1][1], 1)
     C ~ MvNormal(zeros(T, n), fill(T(2), n))
     # etot = func(γ, α, β, [C1, C2, C3, C4, C5], data, T)
     constant_shift ~ Uniform(-10, 10)
@@ -121,14 +120,14 @@ function Overseer.requested_components(::ModelTrainer)
 end
 
 function Overseer.update(::ModelTrainer, m::AbstractLedger)
-
     trainer_settings = m[TrainerSettings][1]
     
     prev_model = isempty(m[Model]) ? nothing : m[Model][end]
     
     n_points = length(m[Unique]) + length(m[Intersection])
+    prev_points = prev_model === nothing ? 0 : prev_model.n_points
 
-    if prev_model === nothing || n_points - prev_model.n_points > trainer_settings.n_points_per_training
+    if n_points - prev_points > trainer_settings.n_points_per_training
         data_train = prepare_data(m)
 
         prev_chain = prev_model === nothing ? nothing : prev_model.chain
@@ -141,9 +140,13 @@ function Overseer.update(::ModelTrainer, m::AbstractLedger)
         end
         
         parameters = mean(chain)
+        display(parameters)
 
+        C = map(1:5) do i
+            parameters[Symbol("C[$i]"), :mean]
+        end
         # or max ?
-        Entity(m, Model(parameters[:α, :mean], parameters[:Jh, :mean], parameters[:C, :mean], parameters[:constant_shift, :mean], chain))
+        Entity(m, Model(parameters[:α, :mean], parameters[:Jh, :mean], C, parameters[:constant_shift, :mean], n_points, chain))
     end
 end
 
@@ -233,11 +236,6 @@ function optimize_sa(x0, model_diag, lower, upper)
     return eigvals_angles2occ(x_min);
 end
 
-@pooled_component Base.@kwdef mutable struct SystemInfo
-    max_running_calcs::Int
-    n_running_calcs::Int = 0
-    n_pending_calcs::Int = 0
-end
 
 # @pooled_component Base.@kwdef struct OptimizeSettings
 #     opts::Vector{Optimizer}
@@ -254,13 +252,12 @@ function Overseer.update(::ModelOptimizer, m::AbstractLedger)
     model = isempty(m[Model]) ? nothing : m[Model][end]
     model === nothing && return
     
-    U = DFC.getfirst(x->x.dftu.U != 0, m[Template][1].structure.atoms).dftu.U
+    U = getfirst(x->x.dftu.U != 0, m[Template][1].structure.atoms).dftu.U
 
     # check how many calcs are pending on server
     # if free room -> generate some more calcs with the current model
-    n_current_simjobs   = length(@entities_in(m, SimJob && !Error && !Done))
-    max_concurrent_jobs = sum(x -> Server(x.server).max_concurrent_jobs, m[ServerInfo])
-    max_new             = max_concurrent_jobs - n_current_simjobs
+    info = m[SearcherInfo][1]
+    max_new = max(0, info.max_concurrent_trials - (info.n_running_calcs + info.n_pending_calcs))
     max_new <= 0 && return 
  
     # find previous unique, intersection, other trials about to run
@@ -274,9 +271,9 @@ function Overseer.update(::ModelOptimizer, m::AbstractLedger)
     lower = vcat(ones(10) * (-0.0), ones(20) * (-π-1e-3))
     upper = vcat(ones(10) * 1.0, ones(20) * (π +1e-3))
 
-    strc = m[BaseCase][1].structure
+    str = m[Template][1].structure
     natoms = length(filter(ismagnetic, str.atoms))
-    nshell = size(m[BaseCase][Results].state.occupations[1], 1)
+    nshell = size(m[Results][1].state.occupations[1], 1)
     dist_thr = 1e-2
     curgen = maximum_generation(m)
     # TODO multithreading

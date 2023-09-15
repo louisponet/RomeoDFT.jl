@@ -135,6 +135,7 @@ module searcher
 
     - `--verbosity=<0>`: the logging verbosity, higher = more
     - `--sleep-time=<30>`: time in seconds between updates of the searcher
+    - `--max-concurrent-trials=<10>`: amount of trials that are submitted/running to the remote at once 
     - `--nrand=<10>`: how many random trials should be performed in a random search generation
     - `--unique-thr=<0.1>`: threshold that determines the uniqueness of electronic states (uses `sssp_distance`)
     - `--mindist-ratio=<0.25>`: minimum distance a trial should have as the ratio of the mean distance between current unique states

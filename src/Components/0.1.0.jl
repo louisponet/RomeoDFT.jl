@@ -237,4 +237,14 @@ end
 
 Base.push!(c::Parents, e::AbstractEntity) = push!(c.parents, Entity(e))
 
+"""
+    SearcherInfo
+
+Holds general information on the Searcher.
+"""
+@component Base.@kwdef mutable struct SearcherInfo
+    max_concurrent_trials::Int = 10
+    n_running_calcs::Int = 0
+    n_pending_calcs::Int = 0
+end
 end

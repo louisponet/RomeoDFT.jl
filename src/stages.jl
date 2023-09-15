@@ -33,7 +33,7 @@ cleanup_stage() = Stage(:cleanup, [creation_stage(),
                                    postprocessing_stage(),
                                    finalize_stage()])
 
-intersection_stage() = Stage(:intersection, [ModelTrainer(), ModelOptimizer(), Intersector()])
+intersection_stage() = Stage(:intersection, [RandomTrialGenerator(), ModelTrainer(), ModelOptimizer(), Intersector()])
     
 # firefly_stage() = Stage(:firefly, [FireFly(), PostFireflyExplorer(), Archiver()])
 

@@ -485,6 +485,7 @@ This is the backend method used for the `romeo searcher create` from the command
 # Control Kwargs
 - `verbosity=0`: the logging verbosity, higher = more. See [Data](@ref) for more info
 - `sleep_time=30`: time in seconds between update polls of the [`Searcher`](@ref)
+- `max_concurrent_trials=10`: amount of trials that are submitted/running to the remote at once
 - `server=nothing`: label of `Server` on which to run everything
 - `exec=nothing`: label of the `pw.x` executable on `server` to use for the search
 - `environment=nothing`: label of the `Environment` to use for running all calculations
@@ -528,6 +529,7 @@ function setup_search(name, scf_file, structure_file = scf_file;
                       α = 0.5,
                       β = 0.5,
                       sleep_time = 30,
+                      max_concurrent_trials = 10,
                       primitive = false,
                       supercell = [1, 1, 1],
                       unique_thr = 1e-2,
@@ -577,6 +579,7 @@ function setup_search(name, scf_file, structure_file = scf_file;
     l = Searcher(; rootdir = dir, sleep_time = sleep_time)
 
     sim_e = Entity(l, setup_ServerInfo(; kwargs...), RandomSearcher(nrand),
+                   SearcherInfo(max_concurrent_trials = max_concurrent_trials),
                    Template(deepcopy(str), deepcopy(calc)),
                    IntersectionSearcher(mindist_ratio, 100),
                    StopCondition(stopping_unique_ratio, stopping_n_generations),

@@ -14,20 +14,27 @@ function Overseer.requested_components(::JobCreator)
 end
 
 function Overseer.update(::JobCreator, m::AbstractLedger)
-    n_current_simjobs   = length(@entities_in(m, SimJob && !Error))
-    max_concurrent_jobs = sum(x -> Server(x.server).max_concurrent_jobs, m[ServerInfo])
-    max_new             = max_concurrent_jobs - n_current_simjobs
+    info = m[SearcherInfo][1]
+    max_new = info.max_concurrent_trials - info.n_running_calcs
 
     tot_new = 0
+    lck = ReentrantLock()
+    info.n_pending_calcs = 0
     # initial job
     @error_capturing_threaded for e in @entities_in(m,
                                                     Template &&
                                                     (BaseCase || SCFSettings || Trial) &&
                                                     !SimJob && !Done)
         if tot_new > max_new && e ∉ m[BaseCase]
+            lock(lck) do
+                info.n_pending_calcs += 1
+            end
             continue
+        else
+            lock(lck) do
+                tot_new += 1
+            end
         end
-        tot_new += 1
 
         scf_calc = deepcopy(e.calculation)
         # Some setup here that's required
@@ -144,6 +151,7 @@ end
 Overseer.requested_components(::JobSubmitter) = (Running, Submitted)
 
 function Overseer.update(::JobSubmitter, m::AbstractLedger)
+    info = m[SearcherInfo][1]
     # We find the server to submit the next batch to by finding the one
     # with the pool with the least entities
     sinfo = m[ServerInfo]
@@ -163,6 +171,8 @@ function Overseer.update(::JobSubmitter, m::AbstractLedger)
     submit_comp = m[Submit]
     pvec = sortperm(Overseer.indices(submit_comp).packed; rev = true)
     permute!(submit_comp, pvec)
+
+    lck = ReentrantLock()
 
     @error_capturing_threaded for e in @safe_entities_in(m, Submit && SimJob)
         sinfo[e] = server_entity
@@ -206,7 +216,7 @@ function Overseer.update(::JobSubmitter, m::AbstractLedger)
         suppress() do
             priority = e in m[NSCFSettings] || e in m[BaseCase] ? server_info.priority + 1 :
                        server_info.priority
-            return submit(e.job; fillexecs = false, versioncheck = false,
+            submit(e.job; fillexecs = false, versioncheck = false,
                           priority = priority)
         end
 
@@ -216,6 +226,9 @@ function Overseer.update(::JobSubmitter, m::AbstractLedger)
         end
 
         set_status!(m, e, Submitted())
+        lock(lck) do
+            info.n_running_calcs += 1
+        end
     end
 end
 
@@ -305,6 +318,7 @@ function Overseer.update(::JobMonitor, m::AbstractLedger)
 
         elseif isparseable(s)
             set_status!(m, e, Completed())
+            m[SearcherInfo][1].n_running_calcs -= 1
         end
         e.cur_time = curt
     end
