@@ -19,7 +19,7 @@ function Overseer.update(::JobCreator, m::AbstractLedger)
 
     tot_new = 0
     lck = ReentrantLock()
-    info.n_pending_calcs = 0
+    info.n_pending_calcs = length(m[Submit])
     # initial job
     @error_capturing_threaded for e in @entities_in(m,
                                                     Template &&
@@ -510,7 +510,7 @@ function stop_check(maxgen::Int, m::AbstractLedger)
         if e in m[Unique] && e.generation != 0
             n_unique[e.generation] += 1
         end
-        if e.generation != 0
+        if e.generation != 0 && e in m[Trial] && m[Trial][e].origin != IntersectionMixed
             n_total[e.generation] += 1
         end
     end
@@ -624,7 +624,7 @@ function Overseer.update(::Stopper, m::AbstractLedger)
     maxgen = maximum_generation(m)
     stop_condition_met, n_unique, n_total = stop_check(maxgen, m)
 
-    search_entities = @entities_in(m, Trial && (RandomSearcher || Intersection))
+    search_entities = @entities_in(m, Trial && !Intersection)
     search_done     = all(x -> x in m[Done] || x in m[Error], search_entities)
 
     if (!stop_condition_met && search_done)

@@ -708,7 +708,7 @@ function plot_evolution(io::IO, l::Searcher; color = true)
 end
 
 function plot_states(io::IO, l::Searcher)
-    es = filter(x -> x.converged, @entities_in(l, Results && Template))
+    es = filter(x -> x.converged, @entities_in(l, Unique && Results && Template))
     if !isempty(es)
         energies = relative_energies(es)
         magmoms  = map(x -> sum(x.state.magmoms), es)

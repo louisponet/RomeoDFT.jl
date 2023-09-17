@@ -105,7 +105,7 @@ end
     sampler = NUTS()
 end
 
-@component struct Model
+@pooled_component struct Model
     α::Float64
     Jh::Float64
     C::Vector{Float64}
@@ -124,17 +124,19 @@ function Overseer.update(::ModelTrainer, m::AbstractLedger)
     
     prev_model = isempty(m[Model]) ? nothing : m[Model][end]
     
-    n_points = length(m[Unique]) + length(m[Intersection])
+    n_points = length(m[Unique]) + length(@entities_in(m,Intersection && Results))
     prev_points = prev_model === nothing ? 0 : prev_model.n_points
 
     if n_points - prev_points > trainer_settings.n_points_per_training
         data_train = prepare_data(m)
 
+        @info "Training with $(length(data_train.diag_occs)) data points"
         prev_chain = prev_model === nothing ? nothing : prev_model.chain
-        
+
+        # I'm not sure what we were trying to do actually works...
         if prev_chain !== nothing
     
-            chain = sample(prev_model.chain, total_energy(data_train) | (;y=data_train.energies), trainer_settings.sampler, trainer_settings.n_samples_per_training)
+            chain = sample(total_energy(data_train) | (;y=data_train.energies), trainer_settings.sampler, trainer_settings.n_samples_per_training)
         else
             chain = sample(total_energy(data_train) | (;y=data_train.energies), trainer_settings.sampler, trainer_settings.n_samples_per_training)
         end
@@ -146,7 +148,7 @@ function Overseer.update(::ModelTrainer, m::AbstractLedger)
             parameters[Symbol("C[$i]"), :mean]
         end
         # or max ?
-        Entity(m, Model(parameters[:α, :mean], parameters[:Jh, :mean], C, parameters[:constant_shift, :mean], n_points, chain))
+        Entity(m, m[Template][entity(m[SearcherInfo],1)], Model(parameters[:α, :mean], parameters[:Jh, :mean], C, parameters[:constant_shift, :mean], n_points, chain), Generation(length(m[Model].c.data)+1))
     end
 end
 
@@ -159,9 +161,9 @@ function occ2x(occ)
         vals, vecs = eigen(m)
         agl = Angles(vecs) 
         append!(eigen_vals, vals)
-        append!(angles, agl.flat)
+        append!(angles, agl.θs)
     end
-    return vcat(eigen_vals, angles)
+    return vcat(clamp.(eigen_vals,0,1), angles)
 end
 
 
@@ -216,7 +218,7 @@ function optimize_cg(x0, model_diag, lower, upper)
         model_diag,
         lower, upper, x0,
         Fminbox(ConjugateGradient(; linesearch= LineSearches.BackTracking())),
-        Optim.Options(iterations=100, outer_iterations=10, show_trace=true))
+        Optim.Options(iterations=100, outer_iterations=10, show_trace=false, show_every=10000))
     x_min = minimizer(res);
     return eigvals_angles2occ(x_min, 5);
 end
@@ -230,10 +232,10 @@ function optimize_sa(x0, model_diag, lower, upper)
             rt=0.95, # temperature reduction rate controls space covered, higher -> more coverage
             verbosity=1,
         ), 
-        Optim.Options(iterations=10^6, show_trace=true)
+        Optim.Options(iterations=10^6, show_trace=false, show_every=100000)
     )
     x_min = minimizer(res);
-    return eigvals_angles2occ(x_min);
+    return eigvals_angles2occ(x_min, 5);
 end
 
 
@@ -252,18 +254,21 @@ function Overseer.update(::ModelOptimizer, m::AbstractLedger)
     model = isempty(m[Model]) ? nothing : m[Model][end]
     model === nothing && return
     
+    model_e = last_entity(m[Model])
+    
     U = getfirst(x->x.dftu.U != 0, m[Template][1].structure.atoms).dftu.U
 
     # check how many calcs are pending on server
     # if free room -> generate some more calcs with the current model
     info = m[SearcherInfo][1]
     max_new = max(0, info.max_concurrent_trials - (info.n_running_calcs + info.n_pending_calcs))
+    @show max_new
     max_new <= 0 && return 
  
     # find previous unique, intersection, other trials about to run
     # to check whether it's duplication
     unique_states = @entities_in(m, Unique && Results)
-    pending_states = @entities_in(m, SimJob && Submit && Trial)
+    pending_states = @entities_in(m, Trial && !Results)
 
     # Generate Trial with origin ModelOptimized + increment generation
     # Severely limit the amount of new intersections, maybe only 6 per generation or whatever
@@ -276,23 +281,37 @@ function Overseer.update(::ModelOptimizer, m::AbstractLedger)
     nshell = size(m[Results][1].state.occupations[1], 1)
     dist_thr = 1e-2
     curgen = maximum_generation(m)
+    
+    rand_search_comp = m[RandomSearcher]
+    rand_search_e    = entity(rand_search_comp, 1)
+    rand_search      = rand_search_comp[rand_search_e]
+    base_e = entity(m[BaseCase], 1)
+    base_state = m[Results][base_e].state
+    template_str = m[Template][rand_search_e].structure
+    nelec    = round.(Int, base_state.totoccs)
+    norb     = size.(base_state.occupations, 1)
+    
+
     # TODO multithreading
     while max_new > 0
         # random start
-        x0 = rand(30) # TODO slightly better random?
+        occ = rand_trial(norb, nelec).state.occupations[1]
+        x0 = occ2x(occ) # TODO slightly better random?
         occ = optimize_cg(x0, x -> model_diag(model, on_site_energy, U, x), lower, upper)
         state0 = State(occ)
-        distances = map(e->Euclidean()(e[Results].state, state0), unique_states) ∪
-                    map(e->Euclidean()(e[Trial].state, state0), pending_states)
+        dist_u = !isempty(unique_states) ? map(e->Euclidean()(e[Results].state, state0), unique_states) : [Inf]
+        dist_p = !isempty(pending_states) ? map(e->Euclidean()(e[Trial].state, state0), pending_states) : [Inf]
+        
+        @show min(minimum(dist_u; init=Inf), minimum(dist_p; init=Inf))
                     
-        if minimum(distances; init=Inf) < dist_thr
+        if min(minimum(dist_u; init=Inf), minimum(dist_p; init=Inf)) < dist_thr
             continue
         end
         trial = Trial(state0, RomeoDFT.ModelOptimized) # TODO other tag?
-        gen = Generation(curgen + 1) # TODO this is wrong
 
         # add new entity with optimized occ
-        new_e = Entity(m, trial, gen) 
+        new_e = add_search_entity!(m, model_e, trial, m[Generation][model_e])
+        m[Model][new_e] = model_e
         max_new -= 1
     end
 

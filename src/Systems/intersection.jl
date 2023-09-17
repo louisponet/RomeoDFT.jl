@@ -95,7 +95,7 @@ function Overseer.update(::Intersector, m::AbstractLedger)
             ilock = ReentrantLock() 
             Threads.@threads for e2 in others
                 for α in (0.25, 0.5, 0.75)
-                    tstate = α * (e1.state + e2.state)
+                    tstate = α * e1.state + (1-α) *e2.state
 
                     # Find closest prev unique
                     dist, minid = findmin(x -> Euclidean()(x.state, tstate), unique_es)
