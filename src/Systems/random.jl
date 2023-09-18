@@ -30,7 +30,7 @@ function rand_trial(n_orb_per_at, n_elec_per_at)
 end
 
 function Overseer.update(::RandomTrialGenerator, m::AbstractLedger)
-    if isempty(m[RandomSearcher]) || isempty(m[BaseCase]) || length(m[RandomSearcher]) >= m[RandomSearcher][1].nsearchers
+    if isempty(m[RandomSearcher]) || isempty(m[BaseCase])
         return
     end
     # First make sure the base case calculation is finished
@@ -48,14 +48,17 @@ function Overseer.update(::RandomTrialGenerator, m::AbstractLedger)
     rand_search_e    = entity(rand_search_comp, 1)
     rand_search      = rand_search_comp[rand_search_e]
 
+    info = m[SearcherInfo][1]
+    max_new = max(0, info.max_concurrent_trials - (info.n_running_calcs + info.n_pending_calcs))
+    max_new <= 0 && return 
     # Wait until all intersections based on random generation have been finished
-    random_search_entities = @entities_in(m, RandomSearcher && Trial)
+    # random_search_entities = @entities_in(m, RandomSearcher && Trial)
     
-    all_in_results = all(x -> x ∈ m[Results], random_search_entities)
-    all_intersection_finished = all(x -> x ∈ m[Done] || x ∈ m[Error], @entities_in(m, Intersection))
-    if !all_in_results || !all_intersection_finished 
-        return
-    end
+    # all_in_results = all(x -> x ∈ m[Results], random_search_entities)
+    # all_intersection_finished = all(x -> x ∈ m[Done] || x ∈ m[Error], @entities_in(m, Intersection))
+    # if !all_in_results || !all_intersection_finished 
+    #     return
+    # end
 
     # Set Generation to the maximum one considering the intersections
     maxgen = maximum_generation(m)
@@ -65,11 +68,11 @@ function Overseer.update(::RandomTrialGenerator, m::AbstractLedger)
     norb     = size.(base_state.occupations, 1)
     
     nsearchers = rand_search.nsearchers
-    for i = 1:nsearchers
+    for i = 1:max_new
         
         e = add_search_entity!(m, rand_search_e,
                                rand_trial(norb, nelec),
-                               Generation(maxgen + 1),
+                               Generation(maxgen),
                                RandomSearcher(nsearchers))
                                
         if Hybrid in m && length(m[Hybrid]) != 0
@@ -77,5 +80,5 @@ function Overseer.update(::RandomTrialGenerator, m::AbstractLedger)
         end
         
     end
-    @debug "New random search at Generation($(maxgen + 1))."
+    @debug "$max_new random searches at Generation($(maxgen))."
 end

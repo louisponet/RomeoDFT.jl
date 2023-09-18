@@ -59,7 +59,7 @@ function prepare_data(l::Searcher)
     
     U = getfirst(x->x.dftu.U != 0, l[Template][1].structure.atoms).dftu.U
     
-    conv_res = @entities_in(l, Results && Unique)
+    conv_res = @entities_in(l, Results && (Unique || Intersection))
     
     states = map(x->x.state, conv_res)
     energies = map(x->x.total_energy - base_energy, conv_res)
@@ -153,17 +153,18 @@ function Overseer.update(::ModelTrainer, m::AbstractLedger)
 end
 
 function occ2x(occ)
-    eigen_vals = Float64[]
-    angles = Float64[]
+    out = Float64[]
+    eigs = Float64[]
+    angls = Float64[]
     up=view(occ, Up())
     down = view(occ, Down())
     for m in [up, down]
         vals, vecs = eigen(m)
         agl = Angles(vecs) 
-        append!(eigen_vals, vals)
-        append!(angles, agl.θs)
+        append!(eigs, clamp.(vals,0,1))
+        append!(angls, agl.θs)
     end
-    return vcat(clamp.(eigen_vals,0,1), angles)
+    return [eigs; angls]
 end
 
 
@@ -218,7 +219,17 @@ function optimize_cg(x0, model_diag, lower, upper)
         model_diag,
         lower, upper, x0,
         Fminbox(ConjugateGradient(; linesearch= LineSearches.BackTracking())),
-        Optim.Options(iterations=100, outer_iterations=10, show_trace=false, show_every=10000))
+        Optim.Options(iterations=100, outer_iterations=10, show_trace=true))
+    x_min = minimizer(res);
+    return eigvals_angles2occ(x_min, 5);
+end
+function optimize_nm(x0, model_diag, lower, upper)
+    # conjugate gradient
+    res = optimize(
+        model_diag,
+        lower, upper, x0,
+        Fminbox(NelderMead()),
+        Optim.Options(iterations=1000, outer_iterations=10, show_trace=false, show_every=100000))
     x_min = minimizer(res);
     return eigvals_angles2occ(x_min, 5);
 end
@@ -262,7 +273,6 @@ function Overseer.update(::ModelOptimizer, m::AbstractLedger)
     # if free room -> generate some more calcs with the current model
     info = m[SearcherInfo][1]
     max_new = max(0, info.max_concurrent_trials - (info.n_running_calcs + info.n_pending_calcs))
-    @show max_new
     max_new <= 0 && return 
  
     # find previous unique, intersection, other trials about to run
@@ -279,7 +289,7 @@ function Overseer.update(::ModelOptimizer, m::AbstractLedger)
     str = m[Template][1].structure
     natoms = length(filter(ismagnetic, str.atoms))
     nshell = size(m[Results][1].state.occupations[1], 1)
-    dist_thr = 1e-2
+    dist_thr = 0.5
     curgen = maximum_generation(m)
     
     rand_search_comp = m[RandomSearcher]
@@ -295,14 +305,13 @@ function Overseer.update(::ModelOptimizer, m::AbstractLedger)
     # TODO multithreading
     while max_new > 0
         # random start
-        occ = rand_trial(norb, nelec).state.occupations[1]
-        x0 = occ2x(occ) # TODO slightly better random?
+        x0 = [rand(10); (rand(20) .- 0.5) .* 2π]
         occ = optimize_cg(x0, x -> model_diag(model, on_site_energy, U, x), lower, upper)
         state0 = State(occ)
         dist_u = !isempty(unique_states) ? map(e->Euclidean()(e[Results].state, state0), unique_states) : [Inf]
         dist_p = !isempty(pending_states) ? map(e->Euclidean()(e[Trial].state, state0), pending_states) : [Inf]
         
-        @show min(minimum(dist_u; init=Inf), minimum(dist_p; init=Inf))
+        @debug min(minimum(dist_u; init=Inf), minimum(dist_p; init=Inf))
                     
         if min(minimum(dist_u; init=Inf), minimum(dist_p; init=Inf)) < dist_thr
             continue
@@ -313,6 +322,7 @@ function Overseer.update(::ModelOptimizer, m::AbstractLedger)
         new_e = add_search_entity!(m, model_e, trial, m[Generation][model_e])
         m[Model][new_e] = model_e
         max_new -= 1
+        info.n_pending_calcs += 1
     end
 
 end

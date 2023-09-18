@@ -455,7 +455,7 @@ Tries to correct some common errors.
 struct ErrorCorrector <: System end
 
 function Overseer.update(::ErrorCorrector, m::AbstractLedger)
-    @error_capturing for e in @safe_entities_in(m, Results && !ShouldRerun)
+    @error_capturing for e in @safe_entities_in(m, Results && !ShouldRerun && !Done)
         if length(e.state.occupations) == 0
             log(e, "ErrorCorrector: has an empty State in Results")
             # This results usually because of some server side issue where something crashed for no reason
