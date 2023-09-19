@@ -8,10 +8,8 @@ function E_hund_exchange(diag_occs, J)
     n = size(diag_occs[1], 1)
     combs = combinations(1:n, 2)
     for o in diag_occs
-        @inbounds for i in 1:n
-            for (p,q) in combs
-                s += o[p, 1] * o[q, 1] + o[p, 2] * o[q, 2]
-            end
+        for (p,q) in combs
+            s += o[p, 1] * o[q, 1] + o[p, 2] * o[q, 2]
         end
     end
     return -J * s
