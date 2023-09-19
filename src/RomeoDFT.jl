@@ -28,7 +28,7 @@ using Reexport
     using Overseer: AbstractEntity, components
 # end
 
-const AnglesType         = Angles{Float64,2,DFWannier.MagneticVector{Float64, Vector{Float64}}}
+const AnglesType         = Angles{Float64, DFWannier.MagneticVector{Float64, Vector{Float64}}}
 const ColinMatrixType    = DFW.ColinMatrix{Float64, Matrix{Float64}}
 const MagneticVectorType = DFW.MagneticVector{Float64, Vector{Float64}}
 

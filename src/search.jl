@@ -994,9 +994,10 @@ function stop_pending_jobs(l)
         Threads.@spawn begin
             if state(e.job) ∈ (RemoteHPC.Pending, RemoteHPC.Submitted)
                 abort(e.job)
-                lock(lck)
-                set_status!(l, e, Submit())
-                unlock(lck)
+                lock(lck) do
+                    l[SearcherInfo][1].n_running_jobs -= 1
+                    set_status!(l, e, Submit())
+                end
             end
         end
     end

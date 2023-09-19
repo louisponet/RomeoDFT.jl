@@ -59,7 +59,7 @@ function prepare_data(l::Searcher)
     
     U = getfirst(x->x.dftu.U != 0, l[Template][1].structure.atoms).dftu.U
     
-    conv_res = @entities_in(l, Results && (Unique || Intersection))
+    conv_res = @entities_in(l, Results && Unique)
     
     states = map(x->x.state, conv_res)
     energies = map(x->x.total_energy - base_energy, conv_res)
@@ -85,17 +85,17 @@ end
 
 @model function total_energy(data, ::Type{T}=Float64) where {T}
     # physics
-    α ~ truncated(Normal(0, 2); lower = 0)
+    Jh ~ truncated(Normal(0.5, 1.0); lower = 0)
     # α ~ truncated(Normal(0, 2); lower = 0)
-    Jh ~ truncated(Normal(0, 2); lower = 0)
+    β ~ truncated(Normal(4, 0.4); lower = 0)
     n = size(data.diag_occs[1][1], 1)
-    C ~ MvNormal(zeros(T, n), fill(T(2), n))
+    C ~ MvNormal(fill(0.7,n), fill(T(0.5), n))
     # etot = func(γ, α, β, [C1, C2, C3, C4, C5], data, T)
-    constant_shift ~ Uniform(-10, 10)
-    etot =on_site_energy(α, Jh, C, constant_shift, data, T)
+    constant_shift ~ Uniform(0, 10)
+    etot =on_site_energy(Jh,β, C, constant_shift, data, T)
     # etot = func(γ, β, [C1, C2, C3], data, T)
     # noise
-    σ ~ truncated(Normal(0, 2); lower = 0)
+    σ ~ truncated(Normal(0.5, 0.5); lower = 0)
     return y ~ MvNormal(etot, σ * I)
 end
 
@@ -114,6 +114,22 @@ end
     chain::Union{Nothing, Chains}
 end
 
+function train_model(m::Searcher)
+    trainer_settings = m[TrainerSettings][1]
+    data_train = prepare_data(m)
+    @info "Training with $(length(data_train.energies)) data points"
+    chain = suppress() do
+        sample(total_energy(data_train) | (;y=data_train.energies), trainer_settings.sampler, trainer_settings.n_samples_per_training)
+    end
+    parameters = mean(chain)
+
+    C = map(1:5) do i
+        parameters[Symbol("C[$i]"), :mean]
+    end
+    # return Model(parameters[:α, :mean], parameters[:Jh, :mean], C, 0, length(data_train.energies), chain)
+    return Model(parameters[:Jh, :mean], parameters[:β, :mean], C, parameters[:constant_shift, :mean], length(data_train.energies), chain)
+end
+
 struct ModelTrainer <: System end
 function Overseer.requested_components(::ModelTrainer)
     return (TrainerSettings, Intersection, Model)
@@ -124,35 +140,21 @@ function Overseer.update(::ModelTrainer, m::AbstractLedger)
     
     prev_model = isempty(m[Model]) ? nothing : m[Model][end]
     
-    n_points = length(m[Unique]) + length(@entities_in(m,Intersection && Results))
+    n_points = length(m[Unique]) #*+ length(@entities_in(m,Intersection && Results))*#
     prev_points = prev_model === nothing ? 0 : prev_model.n_points
 
     if n_points - prev_points > trainer_settings.n_points_per_training
-        data_train = prepare_data(m)
 
-        @info "Training with $(length(data_train.diag_occs)) data points"
         prev_chain = prev_model === nothing ? nothing : prev_model.chain
 
         # I'm not sure what we were trying to do actually works...
-        if prev_chain !== nothing
-    
-            chain = sample(total_energy(data_train) | (;y=data_train.energies), trainer_settings.sampler, trainer_settings.n_samples_per_training)
-        else
-            chain = sample(total_energy(data_train) | (;y=data_train.energies), trainer_settings.sampler, trainer_settings.n_samples_per_training)
-        end
-        
-        parameters = mean(chain)
-        display(parameters)
-
-        C = map(1:5) do i
-            parameters[Symbol("C[$i]"), :mean]
-        end
+        model = train_model(m)
         # or max ?
-        Entity(m, m[Template][entity(m[SearcherInfo],1)], Model(parameters[:α, :mean], parameters[:Jh, :mean], C, parameters[:constant_shift, :mean], n_points, chain), Generation(length(m[Model].c.data)+1))
+        Entity(m, m[Template][entity(m[SearcherInfo],1)], model, Generation(length(m[Model].c.data)+1))
     end
 end
 
-function occ2x(occ)
+function occ2eigvals_angles(occ)
     out = Float64[]
     eigs = Float64[]
     angls = Float64[]
@@ -186,8 +188,8 @@ function eigvals_angles2occ(eigvals_angles::Vector, dim::Int)
         up_vals = all_vals[up_vals_r]
         dn_vals = all_vals[dn_vals_r]
 
-        up_angles = Angles(all_vals[up_angles_r], 1.0,(5,5))
-        dn_angles = Angles(all_vals[dn_angles_r], 1.0, (5,5))
+        up_angles = Angles(all_vals[up_angles_r])
+        dn_angles = Angles(all_vals[dn_angles_r])
         
         up_vecs = Matrix(up_angles)
         dn_vecs = Matrix(dn_angles)
@@ -249,7 +251,27 @@ function optimize_sa(x0, model_diag, lower, upper)
     return eigvals_angles2occ(x_min, 5);
 end
 
+function optim_limits(s::State)
+    n = size(s.occupations[1], 1)
+    lower = repeat(vcat(fill(-0.0, 2n), fill(-4π-1e-3, n*(n-1))), length(s.occupations))
+    upper = repeat(vcat(fill(1.0, 2n), fill(4π +1e-3, n*(n-1))), length(s.occupations))
+    return (; lower, upper)
+end
+    
+function Optim.optimize(model, U, s::State, optimizer=Fminbox(NelderMead()), args...;
+                        iterations = 1000,
+                        outer_iterations = 5,
+                        show_trace = false,
+                        kwargs...)
+    x = vcat(map(x->occ2eigvals_angles(x), s.occupations)...)
+    lower, upper = optim_limits(s)
 
+    res = optimize(x -> model_diag(model, on_site_energy, U, x), lower, upper, x, optimizer, Optim.Options(;iterations, outer_iterations, show_trace, kwargs...), args...)
+
+    x_min = minimizer(res)
+    return State(eigvals_angles2occ(x_min, size(s.occupations[1],1))), res
+end
+    
 # @pooled_component Base.@kwdef struct OptimizeSettings
 #     opts::Vector{Optimizer}
 #     opt_options::Vector{Dict}
@@ -283,8 +305,6 @@ function Overseer.update(::ModelOptimizer, m::AbstractLedger)
     # Generate Trial with origin ModelOptimized + increment generation
     # Severely limit the amount of new intersections, maybe only 6 per generation or whatever
     #  new trial -> hopefully new unique -> 3 x whatever prev unique intersections -> train model whenever Y new unique states are found from those -> rinse repeat 
-    lower = vcat(ones(10) * (-0.0), ones(20) * (-π-1e-3))
-    upper = vcat(ones(10) * 1.0, ones(20) * (π +1e-3))
 
     str = m[Template][1].structure
     natoms = length(filter(ismagnetic, str.atoms))
@@ -305,25 +325,49 @@ function Overseer.update(::ModelOptimizer, m::AbstractLedger)
     # TODO multithreading
     while max_new > 0
         # random start
-        x0 = [rand(10); (rand(20) .- 0.5) .* 2π]
-        occ = optimize_cg(x0, x -> model_diag(model, on_site_energy, U, x), lower, upper)
-        state0 = State(occ)
-        dist_u = !isempty(unique_states) ? map(e->Euclidean()(e[Results].state, state0), unique_states) : [Inf]
-        dist_p = !isempty(pending_states) ? map(e->Euclidean()(e[Trial].state, state0), pending_states) : [Inf]
+        x0 = rand_trial(norb, nelec).state
         
-        @debug min(minimum(dist_u; init=Inf), minimum(dist_p; init=Inf))
-                    
-        if min(minimum(dist_u; init=Inf), minimum(dist_p; init=Inf)) < dist_thr
-            continue
-        end
-        trial = Trial(state0, RomeoDFT.ModelOptimized) # TODO other tag?
+        s, res= optimize(model, U, x0)
+        energy = res.minimum
 
-        # add new entity with optimized occ
-        new_e = add_search_entity!(m, model_e, trial, m[Generation][model_e])
-        m[Model][new_e] = model_e
-        max_new -= 1
-        info.n_pending_calcs += 1
+        min_dist = Inf
+        min_e = Entity(0)
+        min_energy = Inf
+        
+        for e in @entities_in(m, Unique && Results)
+            dist = Euclidean()(e.state, s)
+            if dist < min_dist
+                min_dist = dist
+                min_e = e.e
+                min_energy = 13.6 * (e.total_energy - m[Results][base_e].total_energy)
+            end
+        end
+
+        for e in @entities_in(m, Trial)
+            dist = Euclidean()(e.state, s)
+            if dist < min_dist
+                min_dist = dist
+                min_e = e.e
+            end
+        end
+
+        if min_dist > dist_thr && energy < min_energy / 2
+            trial = Trial(s, RomeoDFT.ModelOptimized) # TODO other tag?
+
+            # add new entity with optimized occ
+            new_e = add_search_entity!(m, model_e, trial, m[Generation][model_e])
+            m[Model][new_e] = model_e
+            max_new -= 1
+            info.n_pending_calcs += 1
+        end
     end
+
+    # Use particle swarm to try and find the "Ground state"
+    # out, res = optimize(model, 4.0, rand_trial(norb, nelec).state, ParticleSwarm(;lower=[fill(0, 10); fill(-4pi, 20)], upper=[fill(1, 10); fill(4pi, 20)], n_particles=20), iterations=2000)
+    # if minimum(x->Euclidean()(out, x.state), @entities_in(m, Results)) > dist_thr && minimum(x->Euclidean()(out, x.state), @entities_in(m, Trial)) > dist_thr
+    #     add_search_entity!(m, model_e, Trial(out, RomeoDFT.IntersectionMixed), m[Generation][model_e], Intersection(model_e, model_e))
+    #     info.n_pending_calcs += 1
+    # end
 
 end
 

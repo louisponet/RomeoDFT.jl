@@ -8,7 +8,7 @@ function rand_trial(n_orb_per_at, n_elec_per_at)
     occs = map(zip(n_orb_per_at, n_elec_per_at)) do (norb, nelec)
         nangles = div(norb * (norb - 1), 2)
         
-        rand_angles() = Angles([π * (rand() - 0.5) for i in 1:nangles], 1.0, (norb, norb))
+        rand_angles() = Angles([π * (rand() - 0.5) for i in 1:nangles])
         
         ox_state_offset = rand([-1, 0, 1])
         diagvec = zeros(2norb)

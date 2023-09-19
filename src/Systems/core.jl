@@ -258,6 +258,7 @@ function Overseer.update(::JobMonitor, m::AbstractLedger)
         end
     end
 
+    lck = ReentrantLock()
     @error_capturing_threaded for e in @safe_entities_in(m,
                                                          SimJob && TimingInfo && !Completed &&
                                                          !Submit && !Pulled)
@@ -304,6 +305,7 @@ function Overseer.update(::JobMonitor, m::AbstractLedger)
 
                 maybe_rerun(e,
                             "Aborted and resubmitted job during: $(Client.last_running_calculation(e.job).name).")
+                m[SearcherInfo][1].n_running_calcs -= 1
             end
 
         elseif s == RemoteHPC.Failed
@@ -311,6 +313,7 @@ function Overseer.update(::JobMonitor, m::AbstractLedger)
             if ispath(server, e.remote_dir) && filesize(server, ofile) == 0.0
                 maybe_rerun(e, "Job failed.")
             end
+            m[SearcherInfo][1].n_running_calcs -= 1
 
         elseif s in (RemoteHPC.NodeFail, RemoteHPC.Cancelled)
             maybe_rerun(e,
@@ -318,7 +321,9 @@ function Overseer.update(::JobMonitor, m::AbstractLedger)
 
         elseif isparseable(s)
             set_status!(m, e, Completed())
-            m[SearcherInfo][1].n_running_calcs -= 1
+            lock(lck) do
+                m[SearcherInfo][1].n_running_calcs -= 1
+            end
         end
         e.cur_time = curt
     end

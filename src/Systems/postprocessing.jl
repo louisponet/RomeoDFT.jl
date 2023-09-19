@@ -87,7 +87,7 @@ function results_from_output(res::Dict, basecase=false)
                 mindist = out.mindist
                 states = out.states
             end
-            accurate_enough = findall(x -> x < 1e-5, res[:accuracy])
+            accurate_enough = findall(x -> x < 1e-9, res[:accuracy])
             if !isempty(accurate_enough)
                 t_results = map(accurate_enough) do iteration
                     hub_energy     = haskey(res, :Hubbard_energy) ? res[:Hubbard_energy][iteration] : typemax(Float64)
@@ -96,7 +96,7 @@ function results_from_output(res::Dict, basecase=false)
                     scf_iterations = iteration
                     fermi          = haskey(res, :fermi)          ? res[:fermi]               : 0.0
                     converged      = res[:converged]
-                    Results(states[iteration+1], minid, mindist, total_energy, hub_energy, scf_iterations,
+                    Results(states[min(length(states), iteration+2)], minid, mindist, total_energy, hub_energy, scf_iterations,
                                                    converged, fermi, accuracy)
                 end
                 out = Results[t_results[end]]
