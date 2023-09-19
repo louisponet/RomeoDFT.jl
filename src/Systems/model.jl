@@ -70,7 +70,6 @@ function prepare_data(l::Searcher)
     return (; energies, prepare_data(occupations, U)...)
 end
 
-# TODO duplicate code
 function prepare_data(occs, U)
     magmoms = tmap(occs) do occupation
         map(occupation) do occ
@@ -121,13 +120,15 @@ end
 function train_model(m::Searcher)
     trainer_settings = m[TrainerSettings][1]
     data_train = prepare_data(m)
+    dim = size(data_train.diag_occs[1][1], 1)
     @info "Training with $(length(data_train.energies)) data points"
+    @info "Occupation matrix dimension: $dim"
     chain = suppress() do
         sample(total_energy(data_train) | (;y=data_train.energies), trainer_settings.sampler, trainer_settings.n_samples_per_training)
     end
     parameters = mean(chain)
 
-    C = map(1:5) do i
+    C = map(1:dim) do i
         parameters[Symbol("C[$i]"), :mean]
     end
     # return Model(parameters[:Jh, :mean], parameters[:β, :mean], C, 0, length(data_train.energies), chain)
@@ -194,13 +195,11 @@ function eigvals_angles2occ(eigvals_angles::Vector, dim::Int)
 end
 
 function model_diag(model, func, U, eigvals_angles::Vector; use_penalty=false)
-
-    occs = eigvals_angles2occ(eigvals_angles, 5) # for now we have one atom
+    dim = length(model.C)
+    occs = eigvals_angles2occ(eigvals_angles, dim)
     data = prepare_data([occs], U)
-    
-    @assert size(eigvals_angles, 1) == 30
-    
-    ys = func(model.Jh, model.α,model.β, model.C, model.constant_shift, data, Float64)[1]
+
+    ys = func(model.α, model.Jh, model.C, model.constant_shift, data, Float64)[1]
     if use_penalty
         eigenvals = eigvals_angles[1:10]
         penalty =  1e2 * sum(@. (max(0, eigenvals-1) + max(0, -eigenvals)))
@@ -209,7 +208,7 @@ function model_diag(model, func, U, eigvals_angles::Vector; use_penalty=false)
     return ys
 end
 
-function optimize_cg(x0, model_diag, lower, upper)
+function optimize_cg(x0, dim, model_diag, lower, upper)
     # conjugate gradient
     res = optimize(
         model_diag,
@@ -217,8 +216,9 @@ function optimize_cg(x0, model_diag, lower, upper)
         Fminbox(ConjugateGradient(; linesearch= LineSearches.BackTracking())),
         Optim.Options(iterations=100, outer_iterations=10, show_trace=true))
     x_min = minimizer(res);
-    return eigvals_angles2occ(x_min, 5);
+    return eigvals_angles2occ(x_min, dim);
 end
+
 function optimize_nm(x0, model_diag, lower, upper)
     # conjugate gradient
     res = optimize(
@@ -230,7 +230,7 @@ function optimize_nm(x0, model_diag, lower, upper)
     return eigvals_angles2occ(x_min, 5);
 end
 
-function optimize_sa(x0, model_diag, lower, upper)
+function optimize_sa(x0, dim, model_diag, lower, upper)
     # simulated annearling with bounds
     res = optimize(
         model_diag,
@@ -242,7 +242,7 @@ function optimize_sa(x0, model_diag, lower, upper)
         Optim.Options(iterations=10^6, show_trace=false, show_every=100000)
     )
     x_min = minimizer(res);
-    return eigvals_angles2occ(x_min, 5);
+    return eigvals_angles2occ(x_min, dim);
 end
 
 function optim_limits(s::State)
@@ -291,10 +291,6 @@ function Overseer.update(::ModelOptimizer, m::AbstractLedger)
     max_new = max(0, info.max_concurrent_trials - (info.n_running_calcs + info.n_pending_calcs))
     max_new <= 0 && return 
  
-    # find previous unique, intersection, other trials about to run
-    # to check whether it's duplication
-    unique_states = @entities_in(m, Unique && Results)
-    pending_states = @entities_in(m, Trial && !Results)
 
     # Generate Trial with origin ModelOptimized + increment generation
     # Severely limit the amount of new intersections, maybe only 6 per generation or whatever
@@ -329,7 +325,10 @@ function Overseer.update(::ModelOptimizer, m::AbstractLedger)
             min_dist = Inf
             min_e = Entity(0)
             min_energy = Inf
-            
+        
+            # compare with previous unique results and other trials about to run
+            # if model optmized is different and predicted to have lower enegry
+            # generate new trial
             for e in @entities_in(m, Unique && Results)
                 dist = Euclidean()(e.state, s)
                 if dist < min_dist
@@ -337,24 +336,24 @@ function Overseer.update(::ModelOptimizer, m::AbstractLedger)
                     min_e = e.e
                     min_energy = 13.6 * (e.total_energy - m[Results][base_e].total_energy)
                 end
-            end
 
-            for e in @entities_in(m, Trial)
-                dist = Euclidean()(e.state, s)
-                if dist < min_dist
-                    min_dist = dist
-                    min_e = e.e
+                for e in @entities_in(m, Trial)
+                    dist = Euclidean()(e.state, s)
+                    if dist < min_dist
+                        min_dist = dist
+                        min_e = e.e
+                    end
                 end
-            end
 
-            if max_new > 0 && min_dist > dist_thr && energy < min_energy / 2
-                lock(lck) do 
-                    trial = Trial(s, RomeoDFT.ModelOptimized) # TODO other tag?
+                if max_new > 0 && min_dist > dist_thr && energy < min_energy / 2
+                    lock(lck) do 
+                        trial = Trial(s, RomeoDFT.ModelOptimized) # TODO other tag?
 
-                    # add new entity with optimized occ
-                    new_e = add_search_entity!(m, model_e, trial, m[Generation][model_e])
-                    m[Model][new_e] = model_e
-                    max_new -= 1
+                        # add new entity with optimized occ
+                        new_e = add_search_entity!(m, model_e, trial, m[Generation][model_e])
+                        m[Model][new_e] = model_e
+                        max_new -= 1
+                    end
                 end
             end
         end
