@@ -30,7 +30,7 @@ function E_U(n, U)
     return 0.5 * U * s
 end
 
-function on_site_energy(γ, β, C, constant_shift, data, T)    
+function on_site_energy(Jh, β, C, constant_shift, data, T)    
     magmoms_squared_sum = data.magmoms_squared_sum
     Eu = data.E_Us
     diag_occs = data.diag_occs
@@ -46,11 +46,10 @@ function on_site_energy(γ, β, C, constant_shift, data, T)
         diag_occ_sum = diag_occs_sum[i]
         diag_occ = diag_occs[i]
         Eu_ = Eu[i]  # +U energy
-        Eh = E_hund_exchange(diag_occ, γ)         # Hund's exchange
+        Eh = E_hund_exchange(diag_occ, Jh)         # Hund's exchange
         Ecf = sum(y->y[1] * y[2], zip(diag_occ_square, repeat(C, natoms)))
         
         E_colombic = - β * sum(diag_occ_sum)       # e-N interactions
-        Eh, Ecf, Eu_, E_colombic
         etot[i] = Eh + Ecf + Eu_ + E_colombic
     end
     return etot .+ constant_shift * length(C)
@@ -68,33 +67,32 @@ function prepare_data(l::Searcher)
     
     states = map(x->x.state, conv_res)
     energies = map(x->(x.total_energy - base_energy) * 13.6, conv_res)
-    energies .*= 13.6
     occupations = map(x->x.occupations, states)
     return (; energies, prepare_data(occupations, U)...)
 end
 
 # TODO duplicate code
 function prepare_data(occs, U)
-    magmoms = map(occs) do occupation
+    magmoms = tmap(occs) do occupation
         map(occupation) do occ
             tr(view(occ, Up())) - tr(view(occ, Down())) 
         end
     end
-    magmoms_squared_sum   = map(magmom -> sum(m -> m^2, magmom), magmoms)
-    E_Us                  = map(occ -> sum(m -> E_U(m, U), occ), occs)
-    diag_occs             = map(occ -> map(x -> hcat(diag(view(x, Up())), diag(view(x, Down()))), occ), occs)
-    diag_occs_sum         = map(occ -> sum(x -> (diag(view(x, Up())) .+ diag(view(x, Down()))), occ), occs)
-    diag_occs_squared_sum = [d.^2 for d in diag_occs_sum]
+    magmoms_squared_sum   = tmap(magmom -> sum(m -> m^2, magmom), magmoms)
+    E_Us                  = tmap(occ -> sum(m -> E_U(m, U), occ), occs)
+    diag_occs             = tmap(occ -> map(x -> hcat(diag(view(x, Up())), diag(view(x, Down()))), occ), occs)
+    diag_occs_sum         = tmap(occ -> sum(x -> (diag(view(x, Up())) .+ diag(view(x, Down()))), occ), occs)
+    diag_occs_squared_sum = tmap(x-> x.^2, diag_occs_sum)
     return (; magmoms_squared_sum, diag_occs_sum, E_Us, diag_occs_squared_sum, diag_occs)
 end
 
 @model function total_energy(data, ::Type{T}=Float64) where {T}
     # physics
-    Jh ~ truncated(Normal(0.0, 2.0); lower = 0)
+    Jh ~ truncated(Normal(1.0, 0.5); lower = 0)
     # α ~ truncated(Normal(0, 2); lower = 0)
-    β ~ truncated(Normal(0, 2.0); lower = 0)
+    β ~ truncated(Normal(4, 0.5); lower = 0)
     n = size(data.diag_occs[1][1], 1)
-    C ~ MvNormal(fill(0,n), 2*I)
+    C ~ MvNormal(fill(0.7,n), 0.5*I)
     # etot = func(γ, α, β, [C1, C2, C3, C4, C5], data, T)
     constant_shift ~ Uniform(0, 10)
     # constant_shift =0 
