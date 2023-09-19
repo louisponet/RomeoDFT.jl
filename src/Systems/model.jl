@@ -4,12 +4,13 @@ using Optim: minimizer, LineSearches
 
 function E_hund_exchange(diag_occs, J)
     # -J_H Σ (1/2 + S_α * S_β)
-    up = map(d ->d[:, 1], diag_occs)
-    down = map(d ->d[:, 2], diag_occs)
     s = 0.
-    for i = eachindex(up)
-        for (p,q) = combinations(1:size(diag_occs, 1), 2)
-            s += up[i][p] * up[i][q] + down[i][p] * down[i][q]
+    n = size(diag_occs, 1)
+    combs = combinations(1:n, 2)
+    @inbounds for i in 1:n
+        o = diag_occs[i]
+        for (p,q) in combs
+            s += o[p, 1] * o[q, 1] + o[p, 2] * o[q, 2]
         end
     end
     return -J * s
@@ -17,10 +18,13 @@ end
 
 function E_U(n, U)
     s = 0.0
-    for m1 = 1:size(n, 1)
+    d = size(n, 1)
+    @inbounds for m1 = 1:d
         s += n[m1,m1]
-        for m2 = 1:size(n, 2)
+        s += n[m1,m1+d]
+        for m2 = 1:d
             s -= n[m1, m2] *  n[m2, m1]
+            s -= n[m1, m2+d] *  n[m2, m1+d]
         end
     end
     return 0.5 * U * s
@@ -36,7 +40,7 @@ function on_site_energy(γ, β, C, constant_shift, data, T)
     natoms = Int(length(diag_occs_squared_sum[1]) / length(C))
 
     etot = zeros(T, length(magmoms_squared_sum))
-    @inbounds for i = 1:length(magmoms_squared_sum)
+    @inbounds Threads.@threads for i = 1:length(magmoms_squared_sum)
         m = magmoms_squared_sum[i]
         diag_occ_square = diag_occs_squared_sum[i]
         diag_occ_sum = diag_occs_sum[i]
@@ -46,6 +50,7 @@ function on_site_energy(γ, β, C, constant_shift, data, T)
         Ecf = sum(y->y[1] * y[2], zip(diag_occ_square, repeat(C, natoms)))
         
         E_colombic = - β * sum(diag_occ_sum)       # e-N interactions
+        Eh, Ecf, Eu_, E_colombic
         etot[i] = Eh + Ecf + Eu_ + E_colombic
     end
     return etot .+ constant_shift * length(C)
@@ -59,10 +64,10 @@ function prepare_data(l::Searcher)
     
     U = getfirst(x->x.dftu.U != 0, l[Template][1].structure.atoms).dftu.U
     
-    conv_res = @entities_in(l, Results && Unique)
+    conv_res = @entities_in(l, Results && (Unique || Intersection))
     
     states = map(x->x.state, conv_res)
-    energies = map(x->x.total_energy - base_energy, conv_res)
+    energies = map(x->(x.total_energy - base_energy) * 13.6, conv_res)
     energies .*= 13.6
     occupations = map(x->x.occupations, states)
     return (; energies, prepare_data(occupations, U)...)
@@ -76,7 +81,7 @@ function prepare_data(occs, U)
         end
     end
     magmoms_squared_sum   = map(magmom -> sum(m -> m^2, magmom), magmoms)
-    E_Us                  = map(occ -> sum(m -> E_U(view(m, Up()), U) + E_U(view(m, Down()), U), occ), occs)
+    E_Us                  = map(occ -> sum(m -> E_U(m, U), occ), occs)
     diag_occs             = map(occ -> map(x -> hcat(diag(view(x, Up())), diag(view(x, Down()))), occ), occs)
     diag_occs_sum         = map(occ -> sum(x -> (diag(view(x, Up())) .+ diag(view(x, Down()))), occ), occs)
     diag_occs_squared_sum = [d.^2 for d in diag_occs_sum]
@@ -85,13 +90,14 @@ end
 
 @model function total_energy(data, ::Type{T}=Float64) where {T}
     # physics
-    Jh ~ truncated(Normal(0.5, 1.0); lower = 0)
+    Jh ~ truncated(Normal(0.0, 2.0); lower = 0)
     # α ~ truncated(Normal(0, 2); lower = 0)
-    β ~ truncated(Normal(4, 0.4); lower = 0)
+    β ~ truncated(Normal(0, 2.0); lower = 0)
     n = size(data.diag_occs[1][1], 1)
-    C ~ MvNormal(fill(0.7,n), fill(T(0.5), n))
+    C ~ MvNormal(fill(0,n), 2*I)
     # etot = func(γ, α, β, [C1, C2, C3, C4, C5], data, T)
     constant_shift ~ Uniform(0, 10)
+    # constant_shift =0 
     etot =on_site_energy(Jh,β, C, constant_shift, data, T)
     # etot = func(γ, β, [C1, C2, C3], data, T)
     # noise
@@ -118,15 +124,15 @@ function train_model(m::Searcher)
     trainer_settings = m[TrainerSettings][1]
     data_train = prepare_data(m)
     @info "Training with $(length(data_train.energies)) data points"
-    chain = suppress() do
-        sample(total_energy(data_train) | (;y=data_train.energies), trainer_settings.sampler, trainer_settings.n_samples_per_training)
-    end
+    # chain = suppress() do
+    chain=    sample(total_energy(data_train) | (;y=data_train.energies), trainer_settings.sampler, trainer_settings.n_samples_per_training)
+    # end
     parameters = mean(chain)
 
     C = map(1:5) do i
         parameters[Symbol("C[$i]"), :mean]
     end
-    # return Model(parameters[:α, :mean], parameters[:Jh, :mean], C, 0, length(data_train.energies), chain)
+    # return Model(parameters[:Jh, :mean], parameters[:β, :mean], C, 0, length(data_train.energies), chain)
     return Model(parameters[:Jh, :mean], parameters[:β, :mean], C, parameters[:constant_shift, :mean], length(data_train.energies), chain)
 end
 
@@ -140,7 +146,7 @@ function Overseer.update(::ModelTrainer, m::AbstractLedger)
     
     prev_model = isempty(m[Model]) ? nothing : m[Model][end]
     
-    n_points = length(m[Unique]) #*+ length(@entities_in(m,Intersection && Results))*#
+    n_points = length(m[Unique]) + length(@entities_in(m,!Unique && Intersection && Results))
     prev_points = prev_model === nothing ? 0 : prev_model.n_points
 
     if n_points - prev_points > trainer_settings.n_points_per_training
@@ -155,18 +161,8 @@ function Overseer.update(::ModelTrainer, m::AbstractLedger)
 end
 
 function occ2eigvals_angles(occ)
-    out = Float64[]
-    eigs = Float64[]
-    angls = Float64[]
-    up=view(occ, Up())
-    down = view(occ, Down())
-    for m in [up, down]
-        vals, vecs = eigen(m)
-        agl = Angles(vecs) 
-        append!(eigs, clamp.(vals,0,1))
-        append!(angls, agl.θs)
-    end
-    return [eigs; angls]
+    eigs, vecs = eigen(occ)
+    return [clamp.(eigs.data, 0, 1); Angles(vecs[Up()]).θs; Angles(vecs[Down()]).θs]
 end
 
 
@@ -358,7 +354,6 @@ function Overseer.update(::ModelOptimizer, m::AbstractLedger)
             new_e = add_search_entity!(m, model_e, trial, m[Generation][model_e])
             m[Model][new_e] = model_e
             max_new -= 1
-            info.n_pending_calcs += 1
         end
     end
 
@@ -425,3 +420,33 @@ end
 # end
 
     
+function test_model(name)
+    l = load(Searcher(name))
+    l[Entity(1)] = RomeoDFT.TrainerSettings(1000, 10, RomeoDFT.NUTS())
+    l[Template][Entity(1)] = Entity(2)
+    l[Entity(1)] = RomeoDFT.SearcherInfo(max_concurrent_trials=10)
+    update(RomeoDFT.ModelTrainer(), l)
+    get_metrics(l)
+end
+
+
+function model_evaluation(model, data)
+    return RomeoDFT.on_site_energy(model.α, model.Jh, model.C, model.constant_shift, data, Float64)
+end
+
+function rmse(y, y_pred)
+    return sqrt(mean((y_pred - y) .^ 2))
+end
+function get_metrics(l::Searcher)
+    model = l[RomeoDFT.Model][end]
+    data = RomeoDFT.prepare_data(l)
+    loss_params = rmse(data.energies, model_evaluation(model, data))
+    E_samples = RomeoDFT.predict(RomeoDFT.total_energy(data), model.chain);
+    ys_mean = vec(mean(Array(RomeoDFT.group(E_samples, :y)); dims=1));
+    ys_median = quantile(E_samples)[:, 3];
+    loss_mean = rmse(data.energies, ys_mean)
+    loss_median = rmse(data.energies, ys_median)
+    std_parameters = sum(describe(model.chain)[1][:, :std])
+    return (; loss_params, loss_mean, loss_median, std_parameters)
+end
+

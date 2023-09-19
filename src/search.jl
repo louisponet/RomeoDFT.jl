@@ -995,7 +995,7 @@ function stop_pending_jobs(l)
             if state(e.job) ∈ (RemoteHPC.Pending, RemoteHPC.Submitted)
                 abort(e.job)
                 lock(lck) do
-                    l[SearcherInfo][1].n_running_jobs -= 1
+                    l[SearcherInfo][1].n_running_calcs -= 1
                     set_status!(l, e, Submit())
                 end
             end

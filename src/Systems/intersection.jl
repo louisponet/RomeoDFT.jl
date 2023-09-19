@@ -143,12 +143,13 @@ function Overseer.update(::Intersector, m::AbstractLedger)
         n_new = min(length(intersections), max(0, info.max_concurrent_trials - (info.n_running_calcs + info.n_pending_calcs)))
         new_intersections = sort!(intersections, rev=true, by = x -> x[1])
         n_added = 0
-        gen = 0
+        g = maximum_generation(m)
         for i = 1:n_new
             dist, trial, intersection, generation = new_intersections[i]
             if dist > p.mindist * generation_distances[generation.generation - 1]
-                gen = max(gen, generation.generation)
+                gen = min(g, generation.generation)
                 add_search_entity!(m, search_e, generation, trial, intersection)
+                info.n_pending_calcs += 1
                 n_added += 1
             end
         end
