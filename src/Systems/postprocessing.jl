@@ -163,7 +163,7 @@ function Overseer.update(::ResultsProcessor, m::AbstractLedger)
                 
                 for i in 2:length(results)
                     if e in m[Trial] 
-                        extra_e = Entity(m, m[Generation][e], Trial(m[Trial][e].state, IntersectionMixed), results[i], Intersection(e.e, e.e), Parent(e.e), Done(true))
+                        extra_e = Entity(m, m[Generation][e], Trial(m[Trial][e].state, IntersectionMixed), results[i], Intersection(e.e, e.e), Parents([e.e]), Done(true))
                         m[Template][extra_e] = e
                     else
                         extra_e = Entity(m, m[Generation][e], results[i], Intersection(e.e, e.e), Parent(e.e), Done(true))

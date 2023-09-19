@@ -742,7 +742,7 @@ function status(io::IO, l::Searcher)
     end
     println(io, "Status:        $status")
     println(io, "Unique states: $(length(l[Unique]))")
-    println(io, "Total Trials:  $(length(@entities_in(l, Results && !Parent)))")
+    println(io, "Total Trials:  $(length(@entities_in(l, Results && !Parents)))")
 
     println(io)
     write_groundstate(io, l)

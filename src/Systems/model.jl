@@ -5,12 +5,13 @@ using Optim: minimizer, LineSearches
 function E_hund_exchange(diag_occs, J)
     # -J_H Σ (1/2 + S_α * S_β)
     s = 0.
-    n = size(diag_occs, 1)
+    n = size(diag_occs[1], 1)
     combs = combinations(1:n, 2)
-    @inbounds for i in 1:n
-        o = diag_occs[i]
-        for (p,q) in combs
-            s += o[p, 1] * o[q, 1] + o[p, 2] * o[q, 2]
+    for o in diag_occs
+        @inbounds for i in 1:n
+            for (p,q) in combs
+                s += o[p, 1] * o[q, 1] + o[p, 2] * o[q, 2]
+            end
         end
     end
     return -J * s
@@ -30,7 +31,7 @@ function E_U(n, U)
     return 0.5 * U * s
 end
 
-function on_site_energy(Jh, β, C, constant_shift, data, T)    
+function on_site_energy(Jh, α, β, C, constant_shift, data, T)    
     magmoms_squared_sum = data.magmoms_squared_sum
     Eu = data.E_Us
     diag_occs = data.diag_occs
@@ -49,7 +50,7 @@ function on_site_energy(Jh, β, C, constant_shift, data, T)
         Eh = E_hund_exchange(diag_occ, Jh)         # Hund's exchange
         Ecf = sum(y->y[1] * y[2], zip(diag_occ_square, repeat(C, natoms)))
         
-        E_colombic = - β * sum(diag_occ_sum)       # e-N interactions
+        E_colombic = α * sum(diag_occ_square) - β * sum(diag_occ_sum)       # e-N interactions
         etot[i] = Eh + Ecf + Eu_ + E_colombic
     end
     return etot .+ constant_shift * length(C)
@@ -63,7 +64,7 @@ function prepare_data(l::Searcher)
     
     U = getfirst(x->x.dftu.U != 0, l[Template][1].structure.atoms).dftu.U
     
-    conv_res = @entities_in(l, Results && (Unique || Intersection))
+    conv_res = @entities_in(l, Results && (Unique||Intersection))
     
     states = map(x->x.state, conv_res)
     energies = map(x->(x.total_energy - base_energy) * 13.6, conv_res)
@@ -89,14 +90,14 @@ end
 @model function total_energy(data, ::Type{T}=Float64) where {T}
     # physics
     Jh ~ truncated(Normal(1.0, 0.5); lower = 0)
-    # α ~ truncated(Normal(0, 2); lower = 0)
+    α ~ truncated(Normal(0, 2); lower = 0)
     β ~ truncated(Normal(4, 0.5); lower = 0)
     n = size(data.diag_occs[1][1], 1)
     C ~ MvNormal(fill(0.7,n), 0.5*I)
     # etot = func(γ, α, β, [C1, C2, C3, C4, C5], data, T)
     constant_shift ~ Uniform(0, 10)
     # constant_shift =0 
-    etot =on_site_energy(Jh,β, C, constant_shift, data, T)
+    etot =on_site_energy(Jh,α, β, C, constant_shift, data, T)
     # etot = func(γ, β, [C1, C2, C3], data, T)
     # noise
     σ ~ truncated(Normal(0.5, 0.5); lower = 0)
@@ -110,8 +111,9 @@ end
 end
 
 @pooled_component struct Model
-    α::Float64
     Jh::Float64
+    α::Float64
+    β::Float64
     C::Vector{Float64}
     constant_shift::Float64
     n_points::Int
@@ -122,16 +124,16 @@ function train_model(m::Searcher)
     trainer_settings = m[TrainerSettings][1]
     data_train = prepare_data(m)
     @info "Training with $(length(data_train.energies)) data points"
-    # chain = suppress() do
-    chain=    sample(total_energy(data_train) | (;y=data_train.energies), trainer_settings.sampler, trainer_settings.n_samples_per_training)
-    # end
+    chain = suppress() do
+        sample(total_energy(data_train) | (;y=data_train.energies), trainer_settings.sampler, trainer_settings.n_samples_per_training)
+    end
     parameters = mean(chain)
 
     C = map(1:5) do i
         parameters[Symbol("C[$i]"), :mean]
     end
     # return Model(parameters[:Jh, :mean], parameters[:β, :mean], C, 0, length(data_train.energies), chain)
-    return Model(parameters[:Jh, :mean], parameters[:β, :mean], C, parameters[:constant_shift, :mean], length(data_train.energies), chain)
+    return Model(parameters[:Jh, :mean],parameters[:α, :mean], parameters[:β, :mean], C, parameters[:constant_shift, :mean], length(data_train.energies), chain)
 end
 
 struct ModelTrainer <: System end
@@ -144,7 +146,7 @@ function Overseer.update(::ModelTrainer, m::AbstractLedger)
     
     prev_model = isempty(m[Model]) ? nothing : m[Model][end]
     
-    n_points = length(m[Unique]) + length(@entities_in(m,!Unique && Intersection && Results))
+    n_points = length(m[Unique]) + length(@entities_in(m, !Unique && Intersection && Results))
     prev_points = prev_model === nothing ? 0 : prev_model.n_points
 
     if n_points - prev_points > trainer_settings.n_points_per_training
@@ -200,7 +202,7 @@ function model_diag(model, func, U, eigvals_angles::Vector; use_penalty=false)
     
     @assert size(eigvals_angles, 1) == 30
     
-    ys = func(model.α, model.Jh, model.C, model.constant_shift, data, Float64)[1]
+    ys = func(model.Jh, model.α,model.β, model.C, model.constant_shift, data, Float64)[1]
     if use_penalty
         eigenvals = eigvals_angles[1:10]
         penalty =  1e2 * sum(@. (max(0, eigenvals-1) + max(0, -eigenvals)))
@@ -253,7 +255,7 @@ function optim_limits(s::State)
 end
     
 function Optim.optimize(model, U, s::State, optimizer=Fminbox(NelderMead()), args...;
-                        iterations = 1000,
+                        iterations = 200,
                         outer_iterations = 5,
                         show_trace = false,
                         kwargs...)
@@ -317,41 +319,46 @@ function Overseer.update(::ModelOptimizer, m::AbstractLedger)
     
 
     # TODO multithreading
+    lck = ReentrantLock() 
     while max_new > 0
-        # random start
-        x0 = rand_trial(norb, nelec).state
-        
-        s, res= optimize(model, U, x0)
-        energy = res.minimum
+        Threads.@threads for i = 1:Threads.nthreads()
+            # random start
+            x0 = rand_trial(norb, nelec).state
+            
+            s, res= optimize(model, U, x0; time_limit = 10)
+            energy = res.minimum
 
-        min_dist = Inf
-        min_e = Entity(0)
-        min_energy = Inf
-        
-        for e in @entities_in(m, Unique && Results)
-            dist = Euclidean()(e.state, s)
-            if dist < min_dist
-                min_dist = dist
-                min_e = e.e
-                min_energy = 13.6 * (e.total_energy - m[Results][base_e].total_energy)
+            min_dist = Inf
+            min_e = Entity(0)
+            min_energy = Inf
+            
+            for e in @entities_in(m, Unique && Results)
+                dist = Euclidean()(e.state, s)
+                if dist < min_dist
+                    min_dist = dist
+                    min_e = e.e
+                    min_energy = 13.6 * (e.total_energy - m[Results][base_e].total_energy)
+                end
             end
-        end
 
-        for e in @entities_in(m, Trial)
-            dist = Euclidean()(e.state, s)
-            if dist < min_dist
-                min_dist = dist
-                min_e = e.e
+            for e in @entities_in(m, Trial)
+                dist = Euclidean()(e.state, s)
+                if dist < min_dist
+                    min_dist = dist
+                    min_e = e.e
+                end
             end
-        end
 
-        if min_dist > dist_thr && energy < min_energy / 2
-            trial = Trial(s, RomeoDFT.ModelOptimized) # TODO other tag?
+            if max_new > 0 && min_dist > dist_thr && energy < min_energy / 2
+                lock(lck) do 
+                    trial = Trial(s, RomeoDFT.ModelOptimized) # TODO other tag?
 
-            # add new entity with optimized occ
-            new_e = add_search_entity!(m, model_e, trial, m[Generation][model_e])
-            m[Model][new_e] = model_e
-            max_new -= 1
+                    # add new entity with optimized occ
+                    new_e = add_search_entity!(m, model_e, trial, m[Generation][model_e])
+                    m[Model][new_e] = model_e
+                    max_new -= 1
+                end
+            end
         end
     end
 
