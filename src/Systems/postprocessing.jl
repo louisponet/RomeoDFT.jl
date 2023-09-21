@@ -87,33 +87,33 @@ function results_from_output(res::Dict, basecase=false)
                 mindist = out.mindist
                 states = out.states
             end
-            accurate_enough = findall(x -> x < 1e-9, res[:accuracy])
-            if !isempty(accurate_enough)
-                t_results = map(accurate_enough) do iteration
-                    hub_energy     = haskey(res, :Hubbard_energy) ? res[:Hubbard_energy][iteration] : typemax(Float64)
-                    total_energy   = haskey(res, :total_energy)   ? res[:total_energy][iteration]   : typemax(Float64)
-                    accuracy       = haskey(res, :accuracy)       ? res[:accuracy][iteration]       : typemax(Float64)
-                    scf_iterations = iteration
-                    fermi          = haskey(res, :fermi)          ? res[:fermi]               : 0.0
-                    converged      = res[:converged]
-                    Results(states[min(length(states), iteration+2)], minid, mindist, total_energy, hub_energy, scf_iterations,
-                                                   converged, fermi, accuracy)
-                end
-                out = Results[t_results[end]]
-                for r in view(t_results,1:length(t_results)-1)
-                    if !any(x->Euclidean()(x.state, r.state) < 1e-1, out)
-                        push!(out, r)
-                    end
-                end
-                return out
-            end
+            # accurate_enough = findall(x -> x < 1e-9, res[:accuracy])
+            # if !isempty(accurate_enough)
+            #     t_results = map(accurate_enough) do iteration
+            #         hub_energy     = haskey(res, :Hubbard_energy) ? res[:Hubbard_energy][iteration] : typemax(Float64)
+            #         total_energy   = haskey(res, :total_energy)   ? res[:total_energy][iteration]   : typemax(Float64)
+            #         accuracy       = haskey(res, :accuracy)       ? res[:accuracy][iteration]       : typemax(Float64)
+            #         scf_iterations = iteration
+            #         fermi          = haskey(res, :fermi)          ? res[:fermi]               : 0.0
+            #         converged      = res[:converged]
+            #         Results(states[min(length(states), iteration+2)], minid, mindist, total_energy, hub_energy, scf_iterations,
+            #                                        converged, fermi, accuracy)
+            #     end
+            #     out = Results[t_results[end]]
+            #     for r in view(t_results,1:length(t_results)-1)
+            #         if !any(x->Euclidean()(x.state, r.state) < 1e-1, out)
+            #             push!(out, r)
+            #         end
+            #     end
+            #     return out
+            # end
             hub_energy     = haskey(res, :Hubbard_energy) ? res[:Hubbard_energy][end] : typemax(Float64)
             total_energy   = haskey(res, :total_energy)   ? res[:total_energy][end]   : typemax(Float64)
             accuracy       = haskey(res, :accuracy)       ? res[:accuracy][end]       : typemax(Float64)
-            scf_iterations = haskey(res, :scf_iteration)  ? res[:scf_iteration][end]  : 0
+            niterations = haskey(res, :scf_iteration)  ? res[:scf_iteration][end]  : 0
             fermi          = haskey(res, :fermi)          ? res[:fermi]               : 0.0
             converged      = res[:converged]
-            return [Results(states[end], minid, mindist, total_energy, hub_energy, scf_iterations,
+            return [Results(states[end], minid, mindist, total_energy, hub_energy, niterations,
                                                converged, fermi, accuracy)]
             
         catch 
@@ -129,10 +129,10 @@ function results_from_output(res::Dict, basecase=false)
     hub_energy     = haskey(res, :Hubbard_energy) ? res[:Hubbard_energy][end] : typemax(Float64)
     total_energy   = haskey(res, :total_energy)   ? res[:total_energy][end]   : typemax(Float64)
     accuracy       = haskey(res, :accuracy)       ? res[:accuracy][end]       : typemax(Float64)
-    scf_iterations = haskey(res, :scf_iteration)  ? res[:scf_iteration][end]  : 0
+    niterations = haskey(res, :scf_iteration)  ? res[:scf_iteration][end]  : 0
     fermi          = haskey(res, :fermi)          ? res[:fermi]               : 0.0
     converged      = res[:converged]
-    return [Results(state, minid, mindist, total_energy, hub_energy, scf_iterations,
+    return [Results(state, minid, mindist, total_energy, hub_energy, niterations,
                                        converged, fermi, accuracy)]
 end
 
