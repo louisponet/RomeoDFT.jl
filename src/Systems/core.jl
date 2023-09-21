@@ -49,8 +49,8 @@ function Overseer.update(::JobCreator, m::AbstractLedger)
                                                                                        e.structure)
             end
 
+            scf_calc[:system][:Hubbard_conv_thr] = 1e-12
             if e in m[Intersection]
-                scf_calc[:system][:Hubbard_conv_thr] = 1e-12
                 scf_calc[:system][:Hubbard_maxstep] = 10000
             end
 

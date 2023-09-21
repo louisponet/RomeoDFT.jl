@@ -3,7 +3,7 @@ function Overseer.requested_components(::RandomTrialGenerator)
     return (RandomSearcher, Intersection, BaseCase)
 end
 
-function rand_trial(n_orb_per_at, n_elec_per_at)
+function rand_trial(n_orb_per_at::Vector, n_elec_per_at::Vector)
     
     occs = map(zip(n_orb_per_at, n_elec_per_at)) do (norb, nelec)
         nangles = div(norb * (norb - 1), 2)

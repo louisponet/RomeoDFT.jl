@@ -7,11 +7,9 @@ function E_hund_exchange(diag_occs, J)
     s = 0.
     n = size(diag_occs[1], 1)
     combs = combinations(1:n, 2)
-    for o in diag_occs
-        @inbounds for i in 1:n
-            for (p,q) in combs
-                s += o[p, 1] * o[q, 1] + o[p, 2] * o[q, 2]
-            end
+    @inbounds for o in diag_occs
+        for (p,q) in combs
+            s += o[p, 1] * o[q, 1] + o[p, 2] * o[q, 2]
         end
     end
     return -J * s
@@ -436,7 +434,7 @@ end
 
 
 function model_evaluation(model, data)
-    return RomeoDFT.on_site_energy(model.α, model.Jh, model.C, model.constant_shift, data, Float64)
+    return RomeoDFT.on_site_energy(model.Jh,model.α, model.β, model.C, model.constant_shift, data, Float64)
 end
 
 function rmse(y, y_pred)
