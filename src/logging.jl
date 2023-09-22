@@ -46,7 +46,7 @@ function Base.lock(f, c::SafeLoggingComponent)
     end
 end
 
-function Base.setindex!(c::SafeLoggingComponent{T}, v::T, e::Overseer.AbstractEntity) where {T}
+function Base.setindex!(c::SafeLoggingComponent{T}, v::T, e::Union{Overseer.AbstractEntity, Int}) where {T}
     @debugv 3 if e in c.lc
         stmsg = process_stacktrace()
         push!(c.lc[e].logs, "($(now())) -- $stmsg: Setting $T")

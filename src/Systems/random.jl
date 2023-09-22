@@ -3,6 +3,19 @@ function Overseer.requested_components(::RandomTrialGenerator)
     return (RandomSearcher, Intersection, BaseCase)
 end
 
+function rand_trial(l::Searcher, n=1)
+    base_e     = entity(l[BaseCase], 1)
+    base_state = l[Results][base_e].state
+    nelec      = round.(Int, base_state.totoccs)
+    norb       = size.(base_state.occupations, 1)
+    
+    out = Trial[]
+    for i = 1:n
+        push!(out, rand_trial(norb, nelec))
+    end
+    return out
+end
+    
 function rand_trial(n_orb_per_at::Vector, n_elec_per_at::Vector)
     
     occs = map(zip(n_orb_per_at, n_elec_per_at)) do (norb, nelec)
@@ -44,36 +57,14 @@ function Overseer.update(::RandomTrialGenerator, m::AbstractLedger)
         @error "Something went wrong with the basecase calculation"
         return
     end
-    rand_search_comp = m[RandomSearcher]
-    rand_search_e    = entity(rand_search_comp, 1)
-    rand_search      = rand_search_comp[rand_search_e]
+    rand_search_e    = entity(m[RandomSearcher], 1)
 
-    info = m[SearcherInfo][1]
-    max_new = max(0, info.max_concurrent_trials - (info.n_running_calcs + info.n_pending_calcs))
-    max_new <= 0 && return 
-    # Wait until all intersections based on random generation have been finished
-    # random_search_entities = @entities_in(m, RandomSearcher && Trial)
-    
-    # all_in_results = all(x -> x ∈ m[Results], random_search_entities)
-    # all_intersection_finished = all(x -> x ∈ m[Done] || x ∈ m[Error], @entities_in(m, Intersection))
-    # if !all_in_results || !all_intersection_finished 
-    #     return
-    # end
-
-    # Set Generation to the maximum one considering the intersections
     maxgen = maximum_generation(m)
     
-    template_str = m[Template][rand_search_e].structure
-    nelec    = round.(Int, base_state.totoccs)
-    norb     = size.(base_state.occupations, 1)
-    
-    nsearchers = rand_search.nsearchers
-    for i = 1:max_new
-        
+    for trial in rand_trial(m, max_new(m))
         e = add_search_entity!(m, rand_search_e,
-                               rand_trial(norb, nelec),
-                               Generation(maxgen),
-                               RandomSearcher(nsearchers))
+                               trial,
+                               Generation(maxgen))
                                
         if Hybrid in m && length(m[Hybrid]) != 0
             m[e] = Hybrid()

@@ -844,6 +844,8 @@ function add_search_entity!(m::AbstractLedger, search_e::Overseer.AbstractEntity
         end
     end
     m[Template][e] = search_e
+    info = m[SearcherInfo][1]
+    m[SearcherInfo][1] = SearcherInfo(n_pending_calcs = info.n_pending_calcs + 1, n_running_calcs = info.n_running_calcs, max_concurrent_trials = info.max_concurrent_trials)
     return e
 end
 
@@ -1192,3 +1194,9 @@ function gather_logs(l, e)
 
     return full_log
 end
+
+function max_new(l::Searcher)
+    info = l[SearcherInfo][1]
+    max(0, info.max_concurrent_trials - (info.n_running_calcs + info.n_pending_calcs))
+end
+    
