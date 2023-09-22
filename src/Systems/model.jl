@@ -238,8 +238,8 @@ function Overseer.update(::MLTrialGenerator, m::AbstractLedger)
         end
     end
     if n_new != 0
-        @debug "$n_new new ML searchers at Generation($(m[Generation][model_e].generation))" 
-    else 
+        @debug "$n_new new ML trials at Generation($(m[Generation][model_e].generation))" 
+    elseif max_new(m) > 0 
         @debug "Max reached, max dist = $max_dist"
     end
 end

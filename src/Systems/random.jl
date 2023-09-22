@@ -60,8 +60,8 @@ function Overseer.update(::RandomTrialGenerator, m::AbstractLedger)
     rand_search_e    = entity(m[RandomSearcher], 1)
 
     maxgen = maximum_generation(m)
-    
-    for trial in rand_trial(m, max_new(m))
+    n_new = max_new(m)
+    for trial in rand_trial(m, n_new)
         e = add_search_entity!(m, rand_search_e,
                                trial,
                                Generation(maxgen))
@@ -69,7 +69,10 @@ function Overseer.update(::RandomTrialGenerator, m::AbstractLedger)
         if Hybrid in m && length(m[Hybrid]) != 0
             m[e] = Hybrid()
         end
+        n_new += 1
         
     end
-    @debug "$max_new random searches at Generation($(maxgen))."
+    if n_new != 0
+        @debug "$n_new random trials at Generation($(maxgen))."
+    end
 end

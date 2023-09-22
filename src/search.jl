@@ -579,6 +579,8 @@ function setup_search(name, scf_file, structure_file = scf_file;
     l = Searcher(; rootdir = dir, sleep_time = sleep_time)
 
     sim_e = Entity(l, setup_ServerInfo(; kwargs...), RandomSearcher(nrand),
+                   TrainerSettings(3000,1.2),
+                   MLTrialSettings(),
                    SearcherInfo(max_concurrent_trials = max_concurrent_trials),
                    Template(deepcopy(str), deepcopy(calc)),
                    IntersectionSearcher(mindist_ratio, 100),

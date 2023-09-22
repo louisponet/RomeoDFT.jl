@@ -46,7 +46,22 @@ function Base.lock(f, c::SafeLoggingComponent)
     end
 end
 
-function Base.setindex!(c::SafeLoggingComponent{T}, v::T, e::Union{Overseer.AbstractEntity, Int}) where {T}
+function Base.setindex!(c::SafeLoggingComponent{T, CT} where CT<:Overseer.AbstractComponent{T}, v::T, e::Int) where {T}
+    @debugv 3 if e in c.lc
+        stmsg = process_stacktrace()
+        push!(c.lc[e].logs, "($(now())) -- $stmsg: Setting $T")
+        "$stmsg: $(Entity(e)) - Setting $T"
+    end
+    if e ∉ c.c
+        lock(c) do 
+            return c.c[e] = v
+        end
+    else
+        return c.c[e]=v
+    end
+end
+
+function Base.setindex!(c::SafeLoggingComponent{T}, v::T, e::Overseer.AbstractEntity) where {T}
     @debugv 3 if e in c.lc
         stmsg = process_stacktrace()
         push!(c.lc[e].logs, "($(now())) -- $stmsg: Setting $T")
