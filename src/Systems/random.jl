@@ -8,12 +8,44 @@ function rand_trial(l::Searcher, n=1)
     base_state = l[Results][base_e].state
     nelec      = round.(Int, base_state.totoccs)
     norb       = size.(base_state.occupations, 1)
-    
+
+    # Here we check whether different oxidation states have been tried
+    # if yes we start randomly taking the total occupations for eigenvalues
+    diff_ox_tried = !isempty(l[Trial]) && round(Int, maximum(x -> sum(x.state.totoccs), l[Trial])) != round(Int, minimum(x->sum(x.state.totoccs), l[Trial]))
+
     out = Trial[]
     for i = 1:n
-        push!(out, rand_trial(norb, nelec))
+        if !diff_ox_tried
+            push!(out, rand_trial(norb, nelec))
+        else
+            eigvals = map(1:length(nelec)) do i
+                e = Entity(l[Unique], rand(1:length(l[Unique])))
+                
+                while !(e in l[Results])
+                    e = Entity(l[Unique], rand(1:length(l[Unique])))
+                end
+            
+                l[Results][e].state.eigvals[i]
+            end
+            
+            push!(out, rand_trial(eigvals))
+        end
     end
     return out
+end
+
+function rand_trial(eigvals::Vector)
+    n_orb = div(length(eigvals[1]), 2)
+    nangles = div(n_orb * (n_orb - 1), 2)
+    
+    rand_angles() = Angles([π * (rand() - 0.5) for i in 1:nangles])
+    
+    occs = map(eigvals) do eig
+        D = DFWannier.MagneticVector(eig)
+        V = DFWannier.ColinMatrix(Matrix(rand_angles()), Matrix(rand_angles()))
+        return Matrix(Eigen(D, V))
+    end
+    return Trial(State(occs), RandomMixed)
 end
     
 function rand_trial(n_orb_per_at::Vector, n_elec_per_at::Vector)

@@ -12,6 +12,9 @@ end
 
 # TODO: Think about whether we need all the max number of intersection per generation etc
 function Overseer.update(::Intersector, m::AbstractLedger)
+    flux_model = model(m)
+    flux_model === nothing && return
+    
     lck = ReentrantLock()
     gencomp = m[Generation]
     
@@ -72,8 +75,8 @@ function Overseer.update(::Intersector, m::AbstractLedger)
         end
     end
 
-
     search_e = entity(m[IntersectionSearcher], 1)
+
     intersections = Tuple{Float64, Trial, Intersection, Generation}[]
     for (p, es) in pools(m[IntersectionSearcher])
         tot = 0
@@ -96,6 +99,7 @@ function Overseer.update(::Intersector, m::AbstractLedger)
             Threads.@threads for e2 in others
                 for α in (0.25, 0.5, 0.75)
                     tstate = α * e1.state + (1-α) *e2.state
+                    tstate = State([features2mat(flux_model(mat2features(tstate.occupations[1])))])
 
                     # Find closest prev unique
                     dist, minid = findmin(x -> Euclidean()(x.state, tstate), unique_es)

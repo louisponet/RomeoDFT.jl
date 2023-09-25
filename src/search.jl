@@ -529,7 +529,7 @@ function setup_search(name, scf_file, structure_file = scf_file;
                       α = 0.5,
                       β = 0.5,
                       sleep_time = 30,
-                      max_concurrent_trials = 10,
+                      max_concurrent_trials = 5,
                       primitive = false,
                       supercell = [1, 1, 1],
                       unique_thr = 1e-2,
@@ -579,7 +579,7 @@ function setup_search(name, scf_file, structure_file = scf_file;
     l = Searcher(; rootdir = dir, sleep_time = sleep_time)
 
     sim_e = Entity(l, setup_ServerInfo(; kwargs...), RandomSearcher(nrand),
-                   TrainerSettings(3000,1.2),
+                   TrainerSettings(2000,1.2),
                    MLTrialSettings(),
                    SearcherInfo(max_concurrent_trials = max_concurrent_trials),
                    Template(deepcopy(str), deepcopy(calc)),
@@ -677,7 +677,7 @@ function write_groundstate(io::IO, l::Searcher)
 end
 
 function plot_evolution(io::IO, l::Searcher; color = true)
-    stop, n_unique, n_total = stop_check(l)
+    n_unique, n_total = unique_evolution(l)
     if length(n_unique) > 1
         p1 = Main.UnicodePlots.lineplot(n_unique ./ n_total; title = "Unique/Trial",
                                         xlabel = "Generation", color = :white)

@@ -49,10 +49,10 @@ function Overseer.update(::JobCreator, m::AbstractLedger)
                                                                                        e.structure)
             end
 
-            if e in m[Intersection]
-                scf_calc[:system][:Hubbard_conv_thr] = 1e-12
-                scf_calc[:system][:Hubbard_maxstep] = 10000
-            end
+            # if e in m[Intersection]
+            #     scf_calc[:system][:Hubbard_conv_thr] = 1e-12
+            #     scf_calc[:system][:Hubbard_maxstep] = 10000
+            # end
 
             if e in m[SCFSettings]
                 for (f, v) in e.replacement_flags
@@ -504,11 +504,7 @@ function Overseer.requested_components(::Stopper)
     return (Done, SimJob, IntersectionSearcher, Simulation, StopCondition)
 end
 
-function stop_check(maxgen::Int, m::AbstractLedger)
-    stop_condition = singleton(m, StopCondition)
-    if maxgen < stop_condition.n_generations
-        return false, Int[], Int[]
-    end
+function unique_evolution(m::AbstractLedger, maxgen = maximum_generation(m))
     n_unique = zeros(Int, maxgen)
     n_total  = zeros(Int, maxgen)
     for e in @safe_entities_in(m, Results && Generation && !Parent)
@@ -519,23 +515,27 @@ function stop_check(maxgen::Int, m::AbstractLedger)
             n_total[e.generation] += 1
         end
     end
+    return n_unique, n_total
+end
+
+function stop_check(m::AbstractLedger)
+    maxgen = maximum_generation(m)
+    stop_condition = singleton(m, StopCondition)
+    if maxgen < stop_condition.n_generations
+        return false, Int[], Int[]
+    end
+    n_unique, n_total = unique_evolution(m, maxgen)
     n_conseq = 0
     for i in 1:maxgen
         r = n_unique[i] / n_total[i]
         if r < stop_condition.unique_ratio
             n_conseq += 1
-        elseif n_conseq >= stop_condition.n_generations
-            break
         else
             n_conseq = 0
         end
     end
     @debugv 2 "Unique to trial ratio for the last $maxgen generations: $(n_unique./n_total)"
     return n_conseq >= stop_condition.n_generations, n_unique, n_total
-end
-
-function stop_check(m::AbstractLedger)
-    return stop_check(maximum(x -> x.generation, m[Generation]; init = 0), m)
 end
 
 # Check if BaseCase was ran with the magnetizations of the minimum state
@@ -627,7 +627,7 @@ function Overseer.update(::Stopper, m::AbstractLedger)
     end
 
     maxgen = maximum_generation(m)
-    stop_condition_met, n_unique, n_total = stop_check(maxgen, m)
+    stop_condition_met, n_unique, n_total = stop_check(m)
 
     search_entities = @entities_in(m, Trial && !Intersection)
     search_done     = all(x -> x in m[Done] || x in m[Error], search_entities)
@@ -637,8 +637,15 @@ function Overseer.update(::Stopper, m::AbstractLedger)
         prepare(m)
         return
     end
+        
 
     if mode(m) == :postprocess
+        if !stop_condition_met
+            @debug "Stop condition not met after postprocessing at Generation($maxgen). Continuing search."
+            set_mode!(m, :search)
+            prepare(m)
+            return
+        end
         all_entities = @entities_in(m, (Trial || BaseCase) && !(Done || Error))
         if length(all_entities) == 0 && all(x->x.cleaned, @entities_in(m, Done && !Error))
             # Check if stop condition is still met

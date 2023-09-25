@@ -14,10 +14,15 @@ function mlp_single_atom(n_features)
     #               Dense(third, second, x -> 2 * (sigmoid(x) - 0.5)),
     #               Dense(second, n_features, x -> 2 * (sigmoid(x) - 0.5)),
     #               )
-    model = Chain(Dense(rand(n_features, n_features).-0.5, true, x -> 2 * (sigmoid(x) - 0.5)),
-                  Dense(rand(n_features, n_features).-0.5, true, x -> 2 * (sigmoid(x) - 0.5)),
+    # model = Chain(Dense(rand(n_features, n_features).-0.5, true, x -> 2 * (sigmoid(x) - 0.5)),
+    #               Dense(rand(n_features, n_features).-0.5, true, x -> 2 * (sigmoid(x) - 0.5)),
+    #               # Dense(n_features, n_features, x -> 2 * (sigmoid(x) - 0.5)),
+    #               Dense(rand(n_features, n_features).-0.5, true, x -> 2 * (sigmoid(x) - 0.5)),
+    #               )
+    model = Chain(Dense(n_features, n_features, x -> 2 * (sigmoid(x) - 0.5f0)),
+                  Dense(n_features, n_features, x -> 2 * (sigmoid(x) - 0.5f0)),
                   # Dense(n_features, n_features, x -> 2 * (sigmoid(x) - 0.5)),
-                  Dense(rand(n_features, n_features).-0.5, true, x -> 2 * (sigmoid(x) - 0.5)),
+                  Dense(n_features, n_features, x -> 2 * (sigmoid(x) - 0.5f0)),
                   )
     return model
 end
@@ -27,7 +32,7 @@ function mat2features(m::RomeoDFT.ColinMatrixType)
     n_half = sum(1:n)
     n_features =n_half *2
 
-    out = zeros(n_features)
+    out = zeros(Float32, n_features)
     c = 1
     for i = 1:n
         for j = i:n
@@ -61,9 +66,11 @@ function features2mat(v::AbstractVector)
     return RomeoDFT.ColinMatrixType(data)
 end
 
+State(model, s::State) = State([features2mat(model(mat2features(s.occupations[1])))])
+
 @component struct ModelData
-    x::Matrix{Float64}
-    y::Matrix{Float64}
+    x::Matrix{Float32}
+    y::Matrix{Float32}
 end
 
 struct ModelDataExtractor <: System end
@@ -84,7 +91,7 @@ function Overseer.update(::ModelDataExtractor, l::AbstractLedger)
             r = get(out, :Hubbard_iterations, 1):length(hubbard)-1
             last_state = State(hubbard[end])
             
-            xs = Vector{Vector{Float64}}(undef, length(r))
+            xs = Vector{Vector{Float32}}(undef, length(r))
             ys = fill(mat2features(last_state.occupations[1]), length(r))
 
             Threads.@threads for i in r
@@ -97,8 +104,8 @@ function Overseer.update(::ModelDataExtractor, l::AbstractLedger)
 end
 
 function prepare_data(l::Searcher)
-    xs = Matrix{Float64}[]
-    ys = Matrix{Float64}[]
+    xs = Matrix{Float32}[]
+    ys = Matrix{Float32}[]
     for e in @entities_in(l, ModelData)
         push!(xs, e.x)
         push!(ys, e.y)
@@ -121,17 +128,17 @@ function train_model(l::Searcher, n_points)
     trainer_settings = l[TrainerSettings][1]
     X, y = prepare_data(l)
     ndat = size(X, 2)
+    
     model = mlp_single_atom(size(X, 1))
-    if !isempty(l[Model])
-        Flux.loadmodel!(model, l[Model][end].model_state)
-    end
+    
     opt_state = Flux.setup(Adam(), model)
     
     @info "training on batch of size $ndat"
     train_set = [(X, y)]
     train_loss = []
-    for i = 1:trainer_settings.n_iterations_per_training
-        loss = 0
+    loss = Inf
+    i = 1
+    while loss > 1e-3
         suppress() do
             Flux.train!(model, train_set, opt_state) do m, x, y
                 loss = Flux.Losses.mse(m(x), y)
@@ -141,6 +148,7 @@ function train_model(l::Searcher, n_points)
         if i % 100 == 0
             @debug i, loss
         end
+        i += 1
     end
     
     return Model(n_points, Flux.state(model))
@@ -177,71 +185,163 @@ struct MLTrialGenerator <: System end
 function Overseer.requested_components(::MLTrialGenerator)
     return (MLTrialSettings, Model, SearcherInfo)
 end
-    
-function Overseer.update(::MLTrialGenerator, m::AbstractLedger)
+
+function model(m::AbstractLedger)
     # if no model yet, skip
     model = isempty(m[Model]) ? nothing : m[Model][end]
     model === nothing && return
-    
+    flux_model = mlp_single_atom(30)
+    Flux.loadmodel!(flux_model, model.model_state)
+    return flux_model
+end
+
+function Overseer.update(::MLTrialGenerator, m::AbstractLedger)
+    # if no model yet, skip
+    flux_model = model(m)
+    if length(m[Results]) < 10
+        return
+    end
+    flux_model === nothing && return
     model_e = last_entity(m[Model])
     
     unique_states = @entities_in(m, Unique && Results)
     pending_states = @entities_in(m, Trial && !Results)
 
-    curgen = maximum_generation(m)
-    
-    flux_model = mlp_single_atom(30)
-    Flux.loadmodel!(flux_model, model.model_state)
-    max_dist = 0
     n_new = 0
-    n_tries = 0
     max_tries = m[MLTrialSettings][1].n_tries
     dist_thr  = m[MLTrialSettings][1].minimum_distance
     
-    while max_new(m) > 0 && n_tries < max_tries
-        min_e = Entity(0)
-        s = nothing
-        x0 = mat2features(rand_trial(m)[1].state.occupations[1])
+    while max_new(m) > 0
+        max_dist = 0
+        new_s = nothing
+        for _ = 1:max_tries
+            
+            s = State(flux_model, rand_trial(m)[1].state)
 
-        s = State([features2mat(flux_model(x0))])
-
-        if any(x->x<0, diag(s.occupations[1])) || any(x -> x < 0, s.eigvals[1])
-            continue
-        end
+            if any(x->x<0, diag(s.occupations[1])) || any(x -> x < 0, s.eigvals[1])
+                continue
+            end
         
-        min_dist = Inf
-        for e in @entities_in(m, Unique && Results)
-            dist = Euclidean()(e.state, s)
-            if dist < min_dist
-                min_dist = dist
-                min_e = Entity(e)
+            min_dist = Inf
+            for e in @entities_in(m, Unique && Results)
+                dist = Euclidean()(e.state, s)
+                if dist < min_dist
+                    min_dist = dist
+                    # min_e = Entity(e)
+                end
+            end
+
+            for e in @entities_in(m, Trial)
+                dist = Euclidean()(e.state, s)
+                if dist < min_dist
+                    min_dist = dist
+                    # min_e = Entity(e)
+                end
+            end
+            
+            if min_dist > dist_thr
+                max_dist = min_dist
+                new_s = s
+                break
+            else
+                if min_dist > max_dist
+                    max_dist = min_dist
+                    new_s = s
+                end
             end
         end
-
-        for e in @entities_in(m, Trial)
-            dist = Euclidean()(e.state, s)
-            if dist < min_dist
-                min_dist = dist
-                min_e = Entity(e)
-            end
-        end
-        if min_dist > dist_thr
-            trial = Trial(s, RomeoDFT.ModelOptimized) # TODO other tag?
-
-            # add new entity with optimized occ
-            new_e = add_search_entity!(m, model_e, trial, m[Generation][model_e])
-            m[Model][new_e] = model_e
-            n_new += 1
-            n_tries = 0
-        else
-            n_tries += 1
-        end
+        @debug "New ml trial max dist $max_dist"
+        trial = Trial(new_s, RomeoDFT.ModelOptimized) # TODO other tag?
+        # add new entity with optimized occ
+        new_e = add_search_entity!(m, model_e, trial, m[Generation][model_e])
+        m[Model][new_e] = model_e
+        n_new += 1
     end
     if n_new != 0
         @debug "$n_new new ML trials at Generation($(m[Generation][model_e].generation))" 
     elseif max_new(m) > 0 
         @debug "Max reached, max dist = $max_dist"
     end
+end
+
+## This is super bad
+struct MLIntersector <: System end
+function Overseer.requested_components(::MLIntersector)
+    return (TrainerSettings, Intersection, Model)
+end
+    
+function Overseer.update(::MLIntersector, m::AbstractLedger)
+    # if no model yet, skip
+    flux_model = model(m)
+    flux_model === nothing && return
+    model_e = last_entity(m[Model])
+    
+    unique_states = collect(@entities_in(m, Unique && Results))
+    pending_states = collect(@entities_in(m, Trial && !Results))
+
+    max_dist = 0
+    n_new = max_new(m)
+    n_new <= 0 && return
+    n_tries = 0
+    max_tries = m[MLTrialSettings][1].n_tries
+    dist_thr  = m[MLTrialSettings][1].minimum_distance
+
+    lck = ReentrantLock()
+    # Trial get the ones that have dist lower than dist_thr
+    trial_intersections = Tuple{Float64, Trial, Intersection}[]
+    # dist > dist_thr
+    good_intersections  = Tuple{Float64, Trial, Intersection}[]
+    
+    # if length(good) > max_new -> stop and ship it
+    Threads.@threads for e1 in unique_states
+        if n_new <= 0
+            break
+        end
+        for e2 in unique_states
+            if n_new <= 0
+                break
+            end
+            if e1 == e2 
+                continue
+            end
+            for α in (0.25, 0.5, 0.75)
+                if n_new <= 0
+                    break
+                end
+                tstate = α * e1.state + (1-α) * e2.state
+                tstate = State([features2mat(flux_model(mat2features(tstate.occupations[1])))])
+                
+                dist, minid   = isempty(unique_states) ? (Inf, 0) : findmin(x -> Euclidean()(x.state, tstate), unique_states)
+                dist2, minid2 = isempty(pending_states) ? (Inf, 0) : findmin(x -> Euclidean()(x.state, tstate), pending_states)
+                lock(lck) do
+                    dist3, mid3   = isempty(good_intersections) ? (Inf, 0) : findmin(x -> Euclidean()(x[2].state, tstate), good_intersections)
+                    dist = min(dist, dist2, dist3)
+                end
+
+
+                if dist > dist_thr
+                    lock(lck) do
+                        push!(good_intersections, (dist, Trial(tstate, ModelOptimized), Intersection(Entity(e1), Entity(e2))))
+                        n_new -= 1
+                    end
+                else
+                    lock(lck) do
+                        push!(trial_intersections, (dist, Trial(tstate, ModelOptimized), Intersection(Entity(e1), Entity(e2))))
+                    end
+                end
+            end
+        end
+    end
+    while n_new > 0 && !isempty(trial_intersections)
+        sort!(trial_intersections, by = x -> min(x[1], minimum(y->Euclidean()(x[2].state, y[2].state), good_intersections, init=Inf)))
+        push!(good_intersections, pop!(trial_intersections))
+        n_new-=1
+    end
+    for (_, trial, intersection) in good_intersections 
+        new_e = add_search_entity!(m, model_e, trial, m[Generation][model_e], intersection)
+        m[Model][new_e] = model_e
+    end
+    @debug "$(length(good_intersections)) new ML trials at Generation($(m[Generation][model_e].generation))" 
 end
 
 ## Save for later
