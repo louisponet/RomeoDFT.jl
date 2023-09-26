@@ -182,12 +182,16 @@ function train_model(l::Searcher, n_points)
 
     train, test           = Flux.splitobs((X, y),           at = train_ratio, shuffle=true)
     train_conv, test_conv = Flux.splitobs((x_conv, y_conv), at = train_ratio_conv, shuffle=true)
+
+    r_non_conv = findall(iszero, y_conv[1, :])
+    r_conv = union(r_non_conv, findall(!iszero, y_conv[1, :])[1:min(2*length(r_non_conv), size(y_conv,2)-length(r_non_conv))])
+    train_conv = (x_conv[:, r_conv], y_conv[:, r_conv])
     
-    if !isempty(test[1])
+    if !isempty(test[1])&& !isempty(l[Model])
         Flux.loadmodel!(model,      l[Model][end].model_state)
     end
     
-    if !isempty(test_conv[1])
+    if !isempty(test_conv[1]) && !isempty(l[Model])
         Flux.loadmodel!(model_conv, l[Model][end].model_state_converge)
     end
     
@@ -232,6 +236,14 @@ function Overseer.update(::ModelTrainer, m::AbstractLedger)
     if length(m[Results]) < 10
         return
     end
+    n_unique, n_total = unique_evolution(m)
+    ilast = findlast(!iszero, n_total)
+    
+    if length(m[Results]) < 10
+        return
+    elseif n_unique[ilast] / n_total[ilast] > 0.4
+        return
+    end
     trainer_settings = m[TrainerSettings][1]
     
     prev_model = isempty(m[Model]) ? nothing : m[Model][end]
@@ -244,7 +256,7 @@ function Overseer.update(::ModelTrainer, m::AbstractLedger)
         
         model = train_model(m, n_points)
         
-        Entity(m, m[Template][1], model, Generation(length(m[Model].c.data)+1))
+        Entity(m, m[Template][1], model, Generation(length(m[Model].c.data)+2))
     end
 end
 
@@ -278,9 +290,7 @@ converge_chance(model, s::State) = model(mat2features(s.occupations[1]))[1]
 function Overseer.update(::MLTrialGenerator, m::AbstractLedger)
     # if no model yet, skip
     flux_model, model_conv = model(m)
-    if length(m[Results]) < 10
-        return
-    end
+    
     flux_model === nothing && return
     model_e = last_entity(m[Model])
     
