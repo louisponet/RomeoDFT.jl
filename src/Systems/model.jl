@@ -24,8 +24,19 @@ function mlp_single_atom(n_features)
                   # Dense(n_features, n_features, x -> 2 * (sigmoid(x) - 0.5)),
                   Dense(n_features, n_features, x -> 2 * (sigmoid(x) - 0.5f0)),
                   )
+    # model = Chain(Dense(n_features, div(n_features,2), x -> 2 * (sigmoid(x) - 0.5f0)),
+    #               Dense(div(n_features,2), div(n_features, 4), x -> 2 * (sigmoid(x) - 0.5f0)),
+    #               Dense(div(n_features, 4), div(n_features,2), x -> 2 * (sigmoid(x) - 0.5f0)),
+    #               Dense(div(n_features,2), n_features, x -> 2 * (sigmoid(x) - 0.5f0)),
+    #               )
     return model
 end
+
+function mlp_converge(n_features)
+    Chain(Dense(n_features, div(n_features, 4), x -> leakyrelu(x, 0.2f0)),
+          Dense(div(n_features, 4), 1, sigmoid))
+end
+    
 
 function mat2features(m::RomeoDFT.ColinMatrixType)
     n = size(m, 1)
@@ -79,38 +90,66 @@ Overseer.requested_components(::ModelDataExtractor) = (ModelData, Results)
 
 function Overseer.update(::ModelDataExtractor, l::AbstractLedger)
     @error_capturing_threaded for e in @entities_in(l, Results && !ModelData)
-        if e.converged 
-            path = joinpath(l, e, "scf.out")
-            out = DFC.FileIO.qe_parse_pw_output(path)
-            
-            if !haskey(out, :Hubbard)
-                continue
-            end
-            hubbard::HUBTYPE = out[:Hubbard]
-            
-            r = get(out, :Hubbard_iterations, 1):length(hubbard)-1
-            last_state = State(hubbard[end])
-            
-            xs = Vector{Vector{Float32}}(undef, length(r))
-            ys = fill(mat2features(last_state.occupations[1]), length(r))
+        path = joinpath(l, e, "scf.out")
+        out = DFC.FileIO.qe_parse_pw_output(path)
+        if !haskey(out, :Hubbard)
+            continue
+        end
+        hubbard::HUBTYPE = out[:Hubbard]
+        
+        r = get(out, :Hubbard_iterations, 1):length(hubbard)-1
+        last_state = State(hubbard[end])
+        
+        xs = Vector{Vector{Float32}}(undef, length(r))
+        Threads.@threads for i in r
+            xs[i] = mat2features(State(hubbard[i]).occupations[1])
+        end
 
-            Threads.@threads for i in r
-                xs[i] = mat2features(State(hubbard[i]).occupations[1])
+        isunique = trues(length(xs))
+        @inbounds for i in 1:length(xs)
+            
+            if isunique[i]
+                xsi = xs[i]
+                for j = i+1:length(xs)
+                    if isunique[j]
+                        xsj = xs[j]
+                        
+                        isunique[j] = sum(k -> abs(xsi[k] - xsj[k]), 1:length(xsi)) > 0.1
+                    end
+                end
             end
-            #TODO can we just 1 ys ?
-            l[ModelData][e] = ModelData(hcat(xs...), hcat(ys...))
-        end 
+        end
+
+        x = xs[isunique]
+        
+        if e.converged
+            ys = fill(mat2features(last_state.occupations[1]), length(x))
+        else
+            # not the most performant
+            ys = fill(0.0f0, length(x))
+        end
+        #TODO can we just 1 ys ?
+        l[ModelData][e] = ModelData(reduce(hcat, x), reduce(hcat, ys))
     end
 end
 
 function prepare_data(l::Searcher)
-    xs = Matrix{Float32}[]
-    ys = Matrix{Float32}[]
+    xs          = Matrix{Float32}[]
+    xs_converge = Matrix{Float32}[]
+    ys          = Matrix{Float32}[]
+    ys_converge = Matrix{Float32}[]
     for e in @entities_in(l, ModelData)
-        push!(xs, e.x)
-        push!(ys, e.y)
+        if size(e.y, 1) == 1
+            push!(xs_converge, e.x) 
+            push!(ys_converge, e.y)
+        else
+            push!(xs_converge, e.x)
+            push!(ys_converge, fill(1.0f0, size(e.x, 2))')
+            push!(xs, e.x)
+            push!(ys, e.y)
+        end
     end
-    hcat(xs...), hcat(ys...)
+    reduce(hcat, xs), reduce(hcat, ys), reduce(hcat, xs_converge), reduce(hcat, ys_converge)
 end
 
 @pooled_component Base.@kwdef struct TrainerSettings
@@ -122,36 +161,66 @@ end
 @pooled_component struct Model
     n_points::Int
     model_state
+    model_state_converge
 end
+
+const MAX_DATA = 5000
 
 function train_model(l::Searcher, n_points)
     trainer_settings = l[TrainerSettings][1]
-    X, y = prepare_data(l)
+    X, y, x_conv, y_conv = prepare_data(l)
     ndat = size(X, 2)
     
-    model = mlp_single_atom(size(X, 1))
+    model      = mlp_single_atom(size(X, 1))
+    model_conv = mlp_converge(size(X, 1))
     
-    opt_state = Flux.setup(Adam(), model)
+    opt_state      = Flux.setup(Adam(), model)
+    opt_state_conv = Flux.setup(Adam(), model_conv)
+
+    train_ratio      = clamp(MAX_DATA / size(X, 2), 0.0, 1.0)
+    train_ratio_conv = clamp(MAX_DATA / size(x_conv, 2), 0.0, 1.0)
+
+    train, test           = Flux.splitobs((X, y),           at = train_ratio, shuffle=true)
+    train_conv, test_conv = Flux.splitobs((x_conv, y_conv), at = train_ratio_conv, shuffle=true)
     
-    @info "training on batch of size $ndat"
-    train_set = [(X, y)]
-    train_loss = []
-    loss = Inf
-    i = 1
-    while loss > 1e-3
-        suppress() do
-            Flux.train!(model, train_set, opt_state) do m, x, y
-                loss = Flux.Losses.mse(m(x), y)
-            end
-        end
-        push!(train_loss, loss)
-        if i % 100 == 0
-            @debug i, loss
-        end
-        i += 1
+    if !isempty(test[1])
+        Flux.loadmodel!(model,      l[Model][end].model_state)
     end
     
-    return Model(n_points, Flux.state(model))
+    if !isempty(test_conv[1])
+        Flux.loadmodel!(model_conv, l[Model][end].model_state_converge)
+    end
+    
+    loss      = Inf
+    loss_conv = Inf
+    time = now()
+    Threads.@sync begin
+        i1 = 1
+        i2 = 1
+        Threads.@spawn while loss > 1e-3 && now() - time < Minute(1)
+            suppress() do
+                Flux.train!(model, [train], opt_state) do m, x, y
+                    loss = Flux.Losses.mse(m(x), y)
+                end
+            end
+            if i1 % 100 == 0
+                @debug "i1 $i1, loss $loss"
+            end
+            i1 += 1
+        end
+        Threads.@spawn while loss_conv > 1e-3 && now() - time < Minute(1)
+            suppress() do
+                Flux.train!(model_conv, [train_conv], opt_state_conv) do m, x, y
+                    loss_conv = Flux.Losses.mse(m(x), y)
+                end
+            end
+            if i2 % 100 == 0
+                @debug "i2 $i2, loss_conv $loss_conv"
+            end
+            i2 += 1
+        end
+    end
+    return Model(!isempty(test[1]) ? l[Model][end].n_points : n_points, Flux.state(model), Flux.state(model_conv))
 end
 
 struct ModelTrainer <: System end
@@ -160,6 +229,9 @@ function Overseer.requested_components(::ModelTrainer)
 end
 
 function Overseer.update(::ModelTrainer, m::AbstractLedger)
+    if length(m[Results]) < 10
+        return
+    end
     trainer_settings = m[TrainerSettings][1]
     
     prev_model = isempty(m[Model]) ? nothing : m[Model][end]
@@ -189,15 +261,23 @@ end
 function model(m::AbstractLedger)
     # if no model yet, skip
     model = isempty(m[Model]) ? nothing : m[Model][end]
-    model === nothing && return
+    
+    model === nothing && return nothing, nothing
+    
     flux_model = mlp_single_atom(30)
     Flux.loadmodel!(flux_model, model.model_state)
-    return flux_model
+
+    model_conv = mlp_converge(30)
+    Flux.loadmodel!(model_conv, model.model_state_converge)
+
+    return flux_model, model_conv
 end
+
+converge_chance(model, s::State) = model(mat2features(s.occupations[1]))[1]
 
 function Overseer.update(::MLTrialGenerator, m::AbstractLedger)
     # if no model yet, skip
-    flux_model = model(m)
+    flux_model, model_conv = model(m)
     if length(m[Results]) < 10
         return
     end
@@ -214,11 +294,14 @@ function Overseer.update(::MLTrialGenerator, m::AbstractLedger)
     while max_new(m) > 0
         max_dist = 0
         new_s = nothing
+        conv_chance = 0f0
         for _ = 1:max_tries
             
             s = State(flux_model, rand_trial(m)[1].state)
-
-            if any(x->x<0, diag(s.occupations[1])) || any(x -> x < 0, s.eigvals[1])
+            
+            c_chance = converge_chance(model_conv, s)
+            
+            if c_chance < 0.6f0 || any(x->x<0, diag(s.occupations[1])) || any(x -> x < 0, s.eigvals[1])
                 continue
             end
         
@@ -242,15 +325,17 @@ function Overseer.update(::MLTrialGenerator, m::AbstractLedger)
             if min_dist > dist_thr
                 max_dist = min_dist
                 new_s = s
+                conv_chance = c_chance
                 break
             else
                 if min_dist > max_dist
                     max_dist = min_dist
                     new_s = s
+                    conv_chance = c_chance
                 end
             end
         end
-        @debug "New ml trial max dist $max_dist"
+        @debug "New ml trial: max dist = $max_dist, conv chance = $conv_chance"
         trial = Trial(new_s, RomeoDFT.ModelOptimized) # TODO other tag?
         # add new entity with optimized occ
         new_e = add_search_entity!(m, model_e, trial, m[Generation][model_e])
@@ -259,8 +344,6 @@ function Overseer.update(::MLTrialGenerator, m::AbstractLedger)
     end
     if n_new != 0
         @debug "$n_new new ML trials at Generation($(m[Generation][model_e].generation))" 
-    elseif max_new(m) > 0 
-        @debug "Max reached, max dist = $max_dist"
     end
 end
 

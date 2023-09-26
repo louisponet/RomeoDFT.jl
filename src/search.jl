@@ -744,7 +744,7 @@ function status(io::IO, l::Searcher)
     end
     println(io, "Status:        $status")
     println(io, "Unique states: $(length(l[Unique]))")
-    println(io, "Total Trials:  $(length(@entities_in(l, Results && !Parents)))")
+    println(io, "Total Trials:  $(length(@entities_in(l, Results && !Parents))),$(length(filter(x->!x.converged, @entities_in(l, Results && !Parents)))) non-converged")
 
     println(io)
     write_groundstate(io, l)
@@ -924,6 +924,7 @@ end
 The main loop that executes the global searching.
 """
 function loop(l::Searcher; verbosity = l.verbosity, sleep_time = l.sleep_time)
+    BLAS.set_num_threads(4)
     if verbosity >= 0
         l.verbosity = verbosity
     end

@@ -294,7 +294,8 @@ function Overseer.update(::JobMonitor, m::AbstractLedger)
             e.current_running = cur_running
 
             # If filesize didn't change for 30min we abort
-            if e.current_runtime > run_check_time && prev_filesize == e.current_filesize
+            if e.current_runtime > 30 && e.current_runtime > run_check_time && prev_filesize == e.current_filesize
+                @debug "Aborting job because $(e.current_runtime) > $run_check_time and $prev_filesize == $(e.current_filesize)"
                 abort(e.job)
                 for c in e.job.calculations
                     if c.name == cur_running
@@ -640,12 +641,6 @@ function Overseer.update(::Stopper, m::AbstractLedger)
         
 
     if mode(m) == :postprocess
-        if !stop_condition_met
-            @debug "Stop condition not met after postprocessing at Generation($maxgen). Continuing search."
-            set_mode!(m, :search)
-            prepare(m)
-            return
-        end
         all_entities = @entities_in(m, (Trial || BaseCase) && !(Done || Error))
         if length(all_entities) == 0 && all(x->x.cleaned, @entities_in(m, Done && !Error))
             # Check if stop condition is still met
