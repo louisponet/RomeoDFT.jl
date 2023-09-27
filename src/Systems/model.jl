@@ -33,7 +33,8 @@ function mlp_single_atom(n_features)
 end
 
 function mlp_converge(n_features)
-    Chain(Dense(n_features, div(n_features, 4), x -> leakyrelu(x, 0.2f0)),
+    Chain(Dense(n_features, div(n_features, 2), x -> leakyrelu(x, 0.2f0)),
+          Dense(div(n_features, 2), div(n_features, 4), sigmoid),
           Dense(div(n_features, 4), 1, sigmoid))
 end
     
@@ -181,30 +182,32 @@ function train_model(l::Searcher, n_points)
     train_ratio_conv = clamp(MAX_DATA / size(x_conv, 2), 0.0, 1.0)
 
     train, test           = Flux.splitobs((X, y),           at = train_ratio, shuffle=true)
-    train_conv, test_conv = Flux.splitobs((x_conv, y_conv), at = train_ratio_conv, shuffle=true)
 
     r_non_conv = findall(iszero, y_conv[1, :])
     r_conv = union(r_non_conv, findall(!iszero, y_conv[1, :])[1:min(2*length(r_non_conv), size(y_conv,2)-length(r_non_conv))])
     train_conv = (x_conv[:, r_conv], y_conv[:, r_conv])
     
-    if !isempty(test[1])&& !isempty(l[Model])
-        Flux.loadmodel!(model,      l[Model][end].model_state)
-    end
+    @debug length(findall(iszero, train_conv[end])), length(train_conv[end])
     
-    if !isempty(test_conv[1]) && !isempty(l[Model])
+    if size(X, 2)>1000 && !isempty(test[1])&& !isempty(l[Model])
+        Flux.loadmodel!(model,      l[Model][end].model_state)
         Flux.loadmodel!(model_conv, l[Model][end].model_state_converge)
     end
     
     loss      = Inf
+    d_loss = Inf
     loss_conv = Inf
+    d_loss_conv = Inf
     time = now()
     Threads.@sync begin
         i1 = 1
         i2 = 1
-        Threads.@spawn while loss > 1e-3 && now() - time < Minute(1)
+        Threads.@spawn while loss > 1e-3 && d_loss > 1e-6 && now() - time < Minute(1)
             suppress() do
                 Flux.train!(model, [train], opt_state) do m, x, y
-                    loss = Flux.Losses.mse(m(x), y)
+                    t_loss = Flux.Losses.mse(m(x), y)
+                    d_loss = abs(loss - t_loss)
+                    loss = t_loss
                 end
             end
             if i1 % 100 == 0
@@ -212,10 +215,12 @@ function train_model(l::Searcher, n_points)
             end
             i1 += 1
         end
-        Threads.@spawn while loss_conv > 1e-3 && now() - time < Minute(1)
+        Threads.@spawn while loss_conv > 1e-3 && d_loss_conv > 1e-6 && now() - time < Minute(1)
             suppress() do
                 Flux.train!(model_conv, [train_conv], opt_state_conv) do m, x, y
-                    loss_conv = Flux.Losses.mse(m(x), y)
+                    t_loss = Flux.Losses.mse(m(x), y)
+                    d_loss_conv = abs(loss_conv - t_loss)
+                    loss_conv = t_loss
                 end
             end
             if i2 % 100 == 0
@@ -237,11 +242,11 @@ function Overseer.update(::ModelTrainer, m::AbstractLedger)
         return
     end
     n_unique, n_total = unique_evolution(m)
-    ilast = findlast(!iszero, n_total)
+    ilast = length(m[Model].c.data) + 1
     
     if length(m[Results]) < 10
         return
-    elseif n_unique[ilast] / n_total[ilast] > 0.4
+    elseif n_total[ilast] != 0 && n_unique[ilast] / n_total[ilast] > 0.4
         return
     end
     trainer_settings = m[TrainerSettings][1]
