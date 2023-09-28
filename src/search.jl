@@ -742,9 +742,11 @@ function status(io::IO, l::Searcher)
             status = "UNKNOWN"
         end
     end
-    println(io, "Status:        $status")
-    println(io, "Unique states: $(length(l[Unique]))")
-    println(io, "Total Trials:  $(length(@entities_in(l, Results && !Parents))),$(length(filter(x->!x.converged, @entities_in(l, Results && !Parents)))) non-converged")
+    println(io, "Status:               $status")
+    println(io, "Unique states:        $(length(l[Unique]))")
+    println(io, "Total Trials:         $(length(@entities_in(l, Results && !Parents))),$(length(filter(x->!x.converged, @entities_in(l, Results && !Parents)))) non-converged")
+    println(io, "Total scf iterations: $(sum(x->x.niterations, l[Results], init=0))")
+    
 
     println(io)
     write_groundstate(io, l)
@@ -1202,4 +1204,22 @@ function max_new(l::Searcher)
     info = l[SearcherInfo][1]
     max(0, info.max_concurrent_trials - (info.n_running_calcs + info.n_pending_calcs))
 end
-    
+
+
+function scf_iterations_per_unique(l::Searcher)
+    out = Int[]
+    for e in @entities_in(l, Results && Unique)
+        c = 0
+        for e1 in @entities_in(l, Results)
+            if e1.e.id <= e.e.id
+                c += e1.niterations
+            end
+        end
+        push!(out, c)
+    end
+    out
+end
+        
+
+
+

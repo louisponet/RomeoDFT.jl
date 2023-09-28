@@ -32,6 +32,26 @@ function mlp_single_atom(n_features)
     return model
 end
 
+function mlp_vae(n_features)
+    # model = Chain(Dense(n_features, div(n_features, 2), x->2 * (sigmoid(x) - 0.5f0)),
+    #               Dense(div(n_features,2), div(n_features, 4), x->2 * (sigmoid(x) - 0.5f0)),
+    #               # Dense(n_features, n_features, x -> 2 * (sigmoid(x) - 0.5)),
+    #               Dense(div(n_features,4), 2, x->2 * (sigmoid(x) - 0.5f0)),
+    #               Dense(2, div(n_features,4), x->2 * (sigmoid(x) - 0.5f0)),
+    #               Dense(div(n_features,4),div(n_features,2), x->2 * (sigmoid(x) - 0.5f0)),
+    #               Dense(div(n_features,2),n_features, x->2 * (sigmoid(x) - 0.5f0)),
+    #               )
+    model = Chain(Dense(n_features, div(n_features,2), x->2 * (sigmoid(x) - 0.5f0)),
+                  Dense(div(n_features,2), div(n_features,2), x->2 * (sigmoid(x) - 0.5f0)),
+                  Dense(div(n_features,2), 3, x->2 * (sigmoid(x) - 0.5f0)),
+                  Dense(3, div(n_features,2), x->2 * (sigmoid(x) - 0.5f0)),
+                  Dense(div(n_features,2), div(n_features,2), x->2 * (sigmoid(x) - 0.5f0)),
+                  # Dense(n_features,n_features, x->2 * (sigmoid(x) - 0.5f0)),
+                  Dense(div(n_features,2), n_features, x->2 * (sigmoid(x) - 0.5f0)),
+                  )
+    return model
+end
+
 function mlp_converge(n_features)
     Chain(Dense(n_features, div(n_features, 2), x -> leakyrelu(x, 0.2f0)),
           Dense(div(n_features, 2), div(n_features, 4), sigmoid),
@@ -133,7 +153,9 @@ function Overseer.update(::ModelDataExtractor, l::AbstractLedger)
         l[ModelData][e] = ModelData(reduce(hcat, x), reduce(hcat, ys))
     end
 end
+const MAX_DATA = 100000
 
+# Actually maybe it's better to always use the full non converged samples since they are less 
 function prepare_data(l::Searcher)
     xs          = Matrix{Float32}[]
     xs_converge = Matrix{Float32}[]
@@ -165,71 +187,88 @@ end
     model_state_converge
 end
 
-const MAX_DATA = 5000
+# Things to try:
+#   - boosting by learning on data that's predicted worst
+#   - batch training
+#   - only update model if new one is better than old one
 
 function train_model(l::Searcher, n_points)
     trainer_settings = l[TrainerSettings][1]
     X, y, x_conv, y_conv = prepare_data(l)
     ndat = size(X, 2)
     
-    model      = mlp_single_atom(size(X, 1))
+    model      = mlp_vae(size(X, 1))
     model_conv = mlp_converge(size(X, 1))
     
     opt_state      = Flux.setup(Adam(), model)
     opt_state_conv = Flux.setup(Adam(), model_conv)
 
-    train_ratio      = clamp(MAX_DATA / size(X, 2), 0.0, 1.0)
-    train_ratio_conv = clamp(MAX_DATA / size(x_conv, 2), 0.0, 1.0)
+    retrain = size(X, 2) > 1000 && !isempty(l[Model])
 
-    train, test           = Flux.splitobs((X, y),           at = train_ratio, shuffle=true)
+    # if retrain
+    #     Flux.loadmodel!(model,      l[Model][end].model_state)
+    #     Flux.loadmodel!(model_conv, l[Model][end].model_state_converge)
+    # end
 
-    r_non_conv = findall(iszero, y_conv[1, :])
-    r_conv = union(r_non_conv, findall(!iszero, y_conv[1, :])[1:min(2*length(r_non_conv), size(y_conv,2)-length(r_non_conv))])
-    train_conv = (x_conv[:, r_conv], y_conv[:, r_conv])
-    
-    @debug length(findall(iszero, train_conv[end])), length(train_conv[end])
-    
-    if size(X, 2)>1000 && !isempty(test[1])&& !isempty(l[Model])
-        Flux.loadmodel!(model,      l[Model][end].model_state)
-        Flux.loadmodel!(model_conv, l[Model][end].model_state_converge)
-    end
-    
-    loss      = Inf
-    d_loss = Inf
-    loss_conv = Inf
+    train = Flux.eachobs((X, y), batchsize=500)
+    train_conv = Flux.eachobs((x_conv, y_conv), batchsize=500)
+
+    loss        = Inf
+    d_loss      = Inf
+    loss_conv   = Inf
     d_loss_conv = Inf
     time = now()
-    Threads.@sync begin
-        i1 = 1
-        i2 = 1
-        Threads.@spawn while loss > 1e-3 && d_loss > 1e-6 && now() - time < Minute(1)
-            suppress() do
-                Flux.train!(model, [train], opt_state) do m, x, y
-                    t_loss = Flux.Losses.mse(m(x), y)
-                    d_loss = abs(loss - t_loss)
-                    loss = t_loss
-                end
+    
+    i1 = 1
+    while loss > 1e-3 && now() - time < Minute(1)
+        losses_grads = tmap(enumerate(train)) do (i, (x, y))
+            val, grads = Flux.withgradient(model) do m
+                Flux.Losses.mse(m(x), y)
             end
-            if i1 % 100 == 0
-                @debug "i1 $i1, loss $loss"
-            end
-            i1 += 1
+            val, grads[1]
         end
-        Threads.@spawn while loss_conv > 1e-3 && d_loss_conv > 1e-6 && now() - time < Minute(1)
-            suppress() do
-                Flux.train!(model_conv, [train_conv], opt_state_conv) do m, x, y
-                    t_loss = Flux.Losses.mse(m(x), y)
-                    d_loss_conv = abs(loss_conv - t_loss)
-                    loss_conv = t_loss
-                end
-            end
-            if i2 % 100 == 0
-                @debug "i2 $i2, loss_conv $loss_conv"
-            end
-            i2 += 1
+
+        tl = 0.0
+        for (v, g) in losses_grads
+            tl += v
+            Flux.update!(opt_state, model, g)
         end
+        tl /= length(train)
+
+        d_loss = abs(loss - tl)
+        loss = tl
+        if i1 % 100 == 0
+            @debug "i1 $i1, loss $loss"
+        end
+        i1 += 1
     end
-    return Model(!isempty(test[1]) ? l[Model][end].n_points : n_points, Flux.state(model), Flux.state(model_conv))
+    
+    time = now()
+    i2 = 1
+    while loss_conv > 1e-3 && d_loss_conv > 1e-6 && now() - time < Minute(1)
+        losses_grads = tmap(enumerate(train_conv)) do (i, (x, y))
+            val, grads = Flux.withgradient(model_conv) do m
+                Flux.Losses.mse(m(x), y)
+            end
+            val, grads[1]
+        end
+
+        tl = 0.0
+        for (v, g) in losses_grads
+            tl += v
+            Flux.update!(opt_state_conv, model_conv, g)
+        end
+        tl /= length(train_conv)
+
+        d_loss_conv = abs(loss_conv - tl)
+        loss_conv = tl
+        if i2 % 100 == 0
+            @debug "i2 $i2, loss_conv $loss_conv"
+        end
+        i2 += 1
+    end
+
+    return Model(now() - time > Minute(2) && !isempty(l[Model]) ? l[Model][end].n_points : n_points, Flux.state(model), Flux.state(model_conv))
 end
 
 struct ModelTrainer <: System end
@@ -238,17 +277,11 @@ function Overseer.requested_components(::ModelTrainer)
 end
 
 function Overseer.update(::ModelTrainer, m::AbstractLedger)
-    if length(m[Results]) < 10
+    # No training till unique larger than 10
+    if length(m[Unique]) - 1 < 10
         return
     end
-    n_unique, n_total = unique_evolution(m)
-    ilast = length(m[Model].c.data) + 1
     
-    if length(m[Results]) < 10
-        return
-    elseif n_total[ilast] != 0 && n_unique[ilast] / n_total[ilast] > 0.4
-        return
-    end
     trainer_settings = m[TrainerSettings][1]
     
     prev_model = isempty(m[Model]) ? nothing : m[Model][end]
@@ -266,7 +299,7 @@ function Overseer.update(::ModelTrainer, m::AbstractLedger)
 end
 
 @component Base.@kwdef struct MLTrialSettings
-    n_tries::Int = 10000
+    n_tries::Int = 1000
     minimum_distance::Float64 = 1.0
 end
 
@@ -281,7 +314,7 @@ function model(m::AbstractLedger)
     
     model === nothing && return nothing, nothing
     
-    flux_model = mlp_single_atom(30)
+    flux_model = mlp_vae(30)
     Flux.loadmodel!(flux_model, model.model_state)
 
     model_conv = mlp_converge(30)
@@ -305,53 +338,49 @@ function Overseer.update(::MLTrialGenerator, m::AbstractLedger)
     n_new = 0
     max_tries = m[MLTrialSettings][1].n_tries
     dist_thr  = m[MLTrialSettings][1].minimum_distance
+
+    encoder = flux_model[1:3]
+    decoder = flux_model[4:6]
+    X, Y, _ = prepare_data(m)
+    
+    latent_space = encoder(X)
     
     while max_new(m) > 0
         max_dist = 0
         new_s = nothing
         conv_chance = 0f0
-        for _ = 1:max_tries
-            
+        for _ = 1:10000
             s = State(flux_model, rand_trial(m)[1].state)
-            
-            c_chance = converge_chance(model_conv, s)
-            
-            if c_chance < 0.6f0 || any(x->x<0, diag(s.occupations[1])) || any(x -> x < 0, s.eigvals[1])
+            if any(x->x<0, diag(s.occupations[1]))
                 continue
             end
-        
+            coord = encoder(mat2features(s.occupations[1]))
             min_dist = Inf
-            for e in @entities_in(m, Unique && Results)
-                dist = Euclidean()(e.state, s)
+            for i = 1:size(latent_space, 2)
+                dist = norm(coord .- view(latent_space, :, i), 2)
                 if dist < min_dist
                     min_dist = dist
-                    # min_e = Entity(e)
                 end
             end
-
-            for e in @entities_in(m, Trial)
-                dist = Euclidean()(e.state, s)
-                if dist < min_dist
-                    min_dist = dist
-                    # min_e = Entity(e)
-                end
-            end
-            
-            if min_dist > dist_thr
+            if min_dist > max_dist
                 max_dist = min_dist
-                new_s = s
-                conv_chance = c_chance
-                break
-            else
-                if min_dist > max_dist
-                    max_dist = min_dist
-                    new_s = s
-                    conv_chance = c_chance
-                end
+                new_s = coord
             end
         end
+        
+        s = State([features2mat(decoder(new_s))])
+            
+        c_chance = converge_chance(model_conv, s)
+            
+        # if c_chance < 0.6f0 || any(x->x<0, diag(s.occupations[1])) || any(x -> x < 0, s.eigvals[1])
+        #     continue
+        # end
+        # add s to latent space
+        latent_space = hcat(latent_space, new_s)
+        
         @debug "New ml trial: max dist = $max_dist, conv chance = $conv_chance"
-        trial = Trial(new_s, RomeoDFT.ModelOptimized) # TODO other tag?
+        
+        trial = Trial(s, RomeoDFT.ModelOptimized) # TODO other tag?
         # add new entity with optimized occ
         new_e = add_search_entity!(m, model_e, trial, m[Generation][model_e])
         m[Model][new_e] = model_e
