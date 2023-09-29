@@ -254,6 +254,6 @@ end
 Closest Unique Entity
 """
 @component struct ClosestUnique
-    e::Entity
+    closest::Entity
 end
 end
