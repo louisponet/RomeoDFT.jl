@@ -90,6 +90,7 @@ const HPSettings           = RomeoDFT.v0_2.HPSettings
 const PPSettings           = RomeoDFT.v0_6.PPSettings
 const ElectrideSettings    = RomeoDFT.v0_6.ElectrideSettings
 const SearcherInfo         = RomeoDFT.v0_1.SearcherInfo
+const ClosestUnique        = RomeoDFT.v0_1.ClosestUnique
 
 export Template            
 export WannierResults      
@@ -138,3 +139,5 @@ export PPSettings
 export ElectrideSettings
 export Children
 export Parents
+export SearcherInfo
+export ClosestUnique

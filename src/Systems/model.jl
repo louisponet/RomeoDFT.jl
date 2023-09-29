@@ -1,6 +1,5 @@
 using Flux
 using Zygote
-
 const HUBTYPE = Vector{Vector{NamedTuple{(:id, :trace, :eigvals, :eigvecs, :occupations, :magmom), Tuple{Int64, NamedTuple{(:up, :down, :total), Tuple{Float64, Float64, Float64}}, NamedTuple{(:up, :down), Tuple{Vector{Float64}, Vector{Float64}}}, NamedTuple{(:up, :down), Tuple{Matrix{Float64}, Matrix{Float64}}}, NamedTuple{(:up, :down), Tuple{Matrix{Float64}, Matrix{Float64}}}, Float64}}}}
 
 function mlp_single_atom(n_features)
@@ -42,12 +41,35 @@ function mlp_vae(n_features)
     #               Dense(div(n_features,2),n_features, x->2 * (sigmoid(x) - 0.5f0)),
     #               )
     model = Chain(Dense(n_features, div(n_features,2), x->2 * (sigmoid(x) - 0.5f0)),
-                  Dense(div(n_features,2), div(n_features,2), x->2 * (sigmoid(x) - 0.5f0)),
-                  Dense(div(n_features,2), 3, x->2 * (sigmoid(x) - 0.5f0)),
-                  Dense(3, div(n_features,2), x->2 * (sigmoid(x) - 0.5f0)),
-                  Dense(div(n_features,2), div(n_features,2), x->2 * (sigmoid(x) - 0.5f0)),
+                  Dense(div(n_features,2), div(n_features,4), x->2 * (sigmoid(x) - 0.5f0)),
+                  Dense(div(n_features,4), 2, sigmoid),
+                  Dense(2, div(n_features,4), sigmoid),
+                  Dense(div(n_features,4), div(n_features,2), x->2 * (sigmoid(x) - 0.5f0)),
                   # Dense(n_features,n_features, x->2 * (sigmoid(x) - 0.5f0)),
                   Dense(div(n_features,2), n_features, x->2 * (sigmoid(x) - 0.5f0)),
+                  )
+    return model
+end
+function mlp_encoder(n_features)
+    # model = Chain(Dense(n_features, div(n_features, 2), x->2 * (sigmoid(x) - 0.5f0)),
+    #               Dense(div(n_features,2), div(n_features, 4), x->2 * (sigmoid(x) - 0.5f0)),
+    #               # Dense(n_features, n_features, x -> 2 * (sigmoid(x) - 0.5)),
+    #               Dense(div(n_features,4), 2, x->2 * (sigmoid(x) - 0.5f0)),
+    #               Dense(2, div(n_features,4), x->2 * (sigmoid(x) - 0.5f0)),
+    #               Dense(div(n_features,4),div(n_features,2), x->2 * (sigmoid(x) - 0.5f0)),
+    #               Dense(div(n_features,2),n_features, x->2 * (sigmoid(x) - 0.5f0)),
+    #               )
+    model = Chain(Dense(n_features, div(n_features,2), x->2 * (sigmoid(x) - 0.5f0)),
+                  Dense(div(n_features,2), div(n_features,2), x->2 * (sigmoid(x) - 0.5f0)),
+                  Dense(div(n_features,2), 2, sigmoid),
+                  )
+    return model
+end
+
+function mlp_decoder(n_features)
+    model = Chain(Dense(2, div(n_features,4), x->2 * (sigmoid(x) - 0.5f0)),
+                  Dense(div(n_features,4),div(n_features,2), x->2 * (sigmoid(x) - 0.5f0)),
+                  Dense(div(n_features,2),n_features, x->2 * (sigmoid(x) - 0.5f0)),
                   )
     return model
 end
@@ -112,6 +134,10 @@ Overseer.requested_components(::ModelDataExtractor) = (ModelData, Results)
 function Overseer.update(::ModelDataExtractor, l::AbstractLedger)
     @error_capturing_threaded for e in @entities_in(l, Results && !ModelData)
         path = joinpath(l, e, "scf.out")
+        if !ispath(path)
+            continue
+        end
+        
         out = DFC.FileIO.qe_parse_pw_output(path)
         if !haskey(out, :Hubbard)
             continue
@@ -187,43 +213,168 @@ end
     model_state_converge
 end
 
+function train_encoder(l::Searcher; model = mlp_encoder(30))
+    trainer_settings = l[TrainerSettings][1]
+    X, y, x_conv, y_conv = prepare_data(l)
+    ndat = size(X, 2)
+    
+    opt_state      = Flux.setup(Adam(), model)
+
+    train = Flux.eachobs((X, y), batchsize=500)
+    unique_features = map(x -> mat2features(x.state.occupations[1]), @entities_in(l, Unique && Results))
+    unique_x = Vector{Float32}[]
+    unique_y = Vector{Float32}[]
+    for i in 1:length(unique_features)
+        for j in 1:length(unique_features)
+            if i == j
+                continue
+            end
+            push!(unique_x, unique_features[i])
+            push!(unique_y, unique_features[j])
+        end
+    end
+
+    u_x = reduce(hcat, unique_x)
+    u_y = reduce(hcat, unique_y)
+
+    loss        = Inf
+    d_loss      = Inf
+    time = now()
+    
+    i1 = 0
+    @inbounds while i1 < 1000 || (loss > 1e-5 && now() - time < Minute(1))
+        losses_grads = tmap(enumerate(train)) do (i, (x, y))
+            val, grads = Flux.withgradient(model) do m
+                Flux.Losses.mse(m(x), m(y))
+            end
+            val, grads[1]
+        end
+
+
+        tl = 0.0
+        for (v, g) in losses_grads
+            tl += v
+            Flux.update!(opt_state, model, g)
+        end
+        tl /= length(train)
+
+        d_loss = abs(loss - tl)
+        loss = tl
+        if i1 % 10 == 0
+            @debug "i1 $i1, loss_equal $loss"
+        end
+        
+        if i1 % 10 == 0
+            loss, grads = Flux.withgradient(model) do m
+                m_x = m(u_x)
+                m_y = m(u_y)
+                
+                sum(1:size(m_y,2)) do i
+                    d1 = min((m_x[1, i] - m_y[1, i])^2, (m_x[1, i] - m_y[1, i] + 1)^2) 
+                    d2 = min((m_x[2, i] - m_y[2, i])^2, (m_x[2, i] - m_y[2, i] + 1)^2)
+                    1/sqrt(d1 + d2)
+                end/4000
+            end
+
+            Flux.update!(opt_state, model, grads[1])
+
+            @debug "i1 $i1, loss_unequal $loss"
+        end
+        i1 += 1
+    end
+    return model
+end
+
+function train_decoder(l::Searcher, encoder; model = mlp_decoder(30))
+    trainer_settings = l[TrainerSettings][1]
+    X, y, x_conv, y_conv = prepare_data(l)
+    y = X
+    X = encoder(X)
+    ndat = size(X, 2)
+    @show size(X), size(y)
+    opt_state      = Flux.setup(Adam(), model)
+
+    train = Flux.eachobs((X, y), batchsize=500)
+
+    loss        = Inf
+    d_loss      = Inf
+    time = now()
+    
+    i1 = 0
+    @inbounds while i1 < 1000 || (loss > 1e-5 && now() - time < Minute(1))
+        losses_grads = tmap(enumerate(train)) do (i, (x, y))
+            val, grads = Flux.withgradient(model) do m
+                Flux.Losses.mse(m(x), y)
+            end
+            val, grads[1]
+        end
+
+
+        tl = 0.0
+        for (v, g) in losses_grads
+            tl += v
+            Flux.update!(opt_state, model, g)
+        end
+        tl /= length(train)
+        d_loss = abs(loss - tl)
+        loss = tl
+        if i1 % 100 == 0
+            @debug "i1 $i1, loss $loss"
+        end
+        i1 += 1
+    end
+    return model
+end
+
 # Things to try:
 #   - boosting by learning on data that's predicted worst
 #   - batch training
 #   - only update model if new one is better than old one
 
-function train_model(l::Searcher, n_points)
+function train_model(l::Searcher; model = mlp_vae(30), max_time = Minute(1))
     trainer_settings = l[TrainerSettings][1]
     X, y, x_conv, y_conv = prepare_data(l)
     ndat = size(X, 2)
     
-    model      = mlp_vae(size(X, 1))
     model_conv = mlp_converge(size(X, 1))
     
     opt_state      = Flux.setup(Adam(), model)
     opt_state_conv = Flux.setup(Adam(), model_conv)
 
-    retrain = size(X, 2) > 1000 && !isempty(l[Model])
+    unique_features = map(x -> mat2features(x.state.occupations[1]), @entities_in(l, Unique && Results))
+    unique_x = Vector{Float32}[]
+    unique_y = Vector{Float32}[]
+    for i in 1:length(unique_features)
+        for j in 1:length(unique_features)
+            if i == j
+                continue
+            end
+            push!(unique_x, unique_features[i])
+            push!(unique_y, unique_features[j])
+        end
+    end
 
-    # if retrain
-    #     Flux.loadmodel!(model,      l[Model][end].model_state)
-    #     Flux.loadmodel!(model_conv, l[Model][end].model_state_converge)
-    # end
-
-    train = Flux.eachobs((X, y), batchsize=500)
+    u_x = reduce(hcat, unique_x)
+    u_y = reduce(hcat, unique_y)
+    
     train_conv = Flux.eachobs((x_conv, y_conv), batchsize=500)
+    train = Flux.eachobs((X, y), batchsize=500)
 
     loss        = Inf
+    loss_uneq = Inf
     d_loss      = Inf
+    d_loss_uneq = Inf
     loss_conv   = Inf
     d_loss_conv = Inf
     time = now()
     
     i1 = 1
-    while loss > 1e-3 && now() - time < Minute(1)
+    while loss > 1e-5 && (d_loss > 1e-6 || d_loss_uneq > 1e-6) && now() - time < max_time
         losses_grads = tmap(enumerate(train)) do (i, (x, y))
             val, grads = Flux.withgradient(model) do m
-                Flux.Losses.mse(m(x), y)
+                zx = m[1:3](x)
+                zy = m[1:3](y)
+                Flux.Losses.mse(m(x), x)/10 + Flux.Losses.mse(zx, zy)
             end
             val, grads[1]
         end
@@ -237,38 +388,58 @@ function train_model(l::Searcher, n_points)
 
         d_loss = abs(loss - tl)
         loss = tl
-        if i1 % 100 == 0
-            @debug "i1 $i1, loss $loss"
+        if i1 % 10 == 0
+            @debug "i1 $i1, loss_equal $loss"
+        end
+        
+        if i1 % 10 == 0
+            tl, grads = Flux.withgradient(model) do m
+                m_x = m[1:3](u_x)
+                m_y = m[1:3](u_y)
+                
+                sum(1:size(m_y,2)) do i
+                    d1 = min((m_x[1, i] - m_y[1, i])^2, (m_x[1, i] - m_y[1, i] + 1)^2) 
+                    d2 = min((m_x[2, i] - m_y[2, i])^2, (m_x[2, i] - m_y[2, i] + 1)^2)
+                    1/sqrt(d1 + d2)
+                end/400
+            end
+            d_loss_uneq = abs(loss_uneq - tl)
+            loss_uneq = tl
+
+            Flux.update!(opt_state, model, grads[1])
+
+            @debug "i1 $i1, loss_unequal $loss_uneq"
         end
         i1 += 1
     end
     
-    time = now()
-    i2 = 1
-    while loss_conv > 1e-3 && d_loss_conv > 1e-6 && now() - time < Minute(1)
-        losses_grads = tmap(enumerate(train_conv)) do (i, (x, y))
-            val, grads = Flux.withgradient(model_conv) do m
-                Flux.Losses.mse(m(x), y)
-            end
-            val, grads[1]
-        end
+    # time = now()
+    # i2 = 1
+    # while loss_conv > 1e-5 && d_loss_conv > 1e-6 && now() - time < Minute(1)
+    #     losses_grads = tmap(enumerate(train_conv)) do (i, (x, y))
+    #         val, grads = Flux.withgradient(model_conv) do m
+    #             Flux.Losses.mse(m(x), y)
+    #         end
+    #         val, grads[1]
+    #     end
 
-        tl = 0.0
-        for (v, g) in losses_grads
-            tl += v
-            Flux.update!(opt_state_conv, model_conv, g)
-        end
-        tl /= length(train_conv)
+    #     tl = 0.0
+    #     for (v, g) in losses_grads
+    #         tl += v
+    #         Flux.update!(opt_state_conv, model_conv, g)
+    #     end
+    #     tl /= length(train_conv)
 
-        d_loss_conv = abs(loss_conv - tl)
-        loss_conv = tl
-        if i2 % 100 == 0
-            @debug "i2 $i2, loss_conv $loss_conv"
-        end
-        i2 += 1
-    end
+    #     d_loss_conv = abs(loss_conv - tl)
+    #     loss_conv = tl
+    #     if i2 % 100 == 0
+    #         @debug "i2 $i2, loss_conv $loss_conv"
+    #     end
+    #     i2 += 1
+    # end
+    return model
 
-    return Model(now() - time > Minute(2) && !isempty(l[Model]) ? l[Model][end].n_points : n_points, Flux.state(model), Flux.state(model_conv))
+    # return Model(now() - time > Minute(2) && !isempty(l[Model]) ? l[Model][end].n_points : n_points, Flux.state(model), Flux.state(model_conv))
 end
 
 struct ModelTrainer <: System end
@@ -284,17 +455,18 @@ function Overseer.update(::ModelTrainer, m::AbstractLedger)
     
     trainer_settings = m[TrainerSettings][1]
     
-    prev_model = isempty(m[Model]) ? nothing : m[Model][end]
+    prev_model = isempty(m[Model]) ? nothing : (m_ = mlp_vae(30); Flux.loadmodel!(m_, m[Model][end].model_state); m_)
     
     n_points = sum(x -> x.converged ? x.niterations - x.constraining_steps : 0, m[Results], init=0)
     
-    prev_points = prev_model === nothing ? 0 : prev_model.n_points
+    prev_points = prev_model === nothing ? 0 : m[Model][end].n_points
 
-    if n_points > prev_points * trainer_settings.new_train_data_ratio
+    if prev_model === nothing || length(m[Unique]) > prev_points 
         
-        model = train_model(m, n_points)
+        # model = prev_model === nothing ? train_model(m) : train_model(m, model=prev_model)
+        model = train_model(m)
         
-        Entity(m, m[Template][1], model, Generation(length(m[Model].c.data)+2))
+        Entity(m, m[Template][1], Model(length(m[Unique]), Flux.state(model), Flux.state(mlp_converge(30))), Generation(length(m[Model].c.data)+2))
     end
 end
 
@@ -325,63 +497,88 @@ end
 
 converge_chance(model, s::State) = model(mat2features(s.occupations[1]))[1]
 
-function Overseer.update(::MLTrialGenerator, m::AbstractLedger)
-    # if no model yet, skip
+function decoder(m::AbstractLedger)
     flux_model, model_conv = model(m)
-    
     flux_model === nothing && return
-    model_e = last_entity(m[Model])
+    n_layers = length(flux_model) 
+    return flux_model[div(n_layers, 2)+1:end]
+end    
+function encoder(m::AbstractLedger)
+    flux_model, model_conv = model(m)
+    flux_model === nothing && return
+    n_layers = length(flux_model) 
+    return flux_model[1:div(n_layers, 2)]
+end    
+
+function potential_trials(m::AbstractLedger; en = encoder(m))
+    en === nothing && return
     
     unique_states = @entities_in(m, Unique && Results)
     pending_states = @entities_in(m, Trial && !Results)
 
-    n_new = 0
     max_tries = m[MLTrialSettings][1].n_tries
     dist_thr  = m[MLTrialSettings][1].minimum_distance
 
-    encoder = flux_model[1:3]
-    decoder = flux_model[4:6]
-    X, Y, _ = prepare_data(m)
-    
-    latent_space = encoder(X)
-    
-    while max_new(m) > 0
-        max_dist = 0
-        new_s = nothing
-        conv_chance = 0f0
-        for _ = 1:10000
-            s = State(flux_model, rand_trial(m)[1].state)
-            if any(x->x<0, diag(s.occupations[1]))
-                continue
-            end
-            coord = encoder(mat2features(s.occupations[1]))
-            min_dist = Inf
-            for i = 1:size(latent_space, 2)
-                dist = norm(coord .- view(latent_space, :, i), 2)
-                if dist < min_dist
-                    min_dist = dist
+    latent_space = map(x->en(mat2features(x.state.occupations[1])), unique_states)
+    trial_latent_space = map(x->en(mat2features(x[Trial].state.occupations[1])), @entities_in(m, Trial && Results))
+    time = now()
+
+    potential_intersections = Tuple{Float64, Vector{Float32}}[]    
+    for i in 1:length(latent_space)
+        z1 = latent_space[i]
+        for j = i+1:length(latent_space)
+            z2 = latent_space[j]
+
+            mid = (z1 .+ z2) ./ 2
+            mid[1] = mid[1] > 1 ? mid[1] - 1 : mid[1]
+            mid[2] = mid[2] > 1 ? mid[2] - 1 : mid[2]
+            # res = optimize([0f0,0f0], [1f0,1f0],mid, Optim.Fminbox(ParticleSwarm(n_particles=10)), Optim.Options(show_trace=true)) do x
+            res = optimize(mid,ParticleSwarm(lower=[0f0,0f0], upper= [1f0,1f0], n_particles=10)) do x
+                out = sum(1:length(latent_space)) do i
+                    d1 = (latent_space[i][1] - x[1])^2 
+                    d2 = (latent_space[i][2] - x[2])^2
+                    1/sqrt(d1 + d2)
                 end
+
+                t = sum(1:length(trial_latent_space)) do i
+                    tx = trial_latent_space[i][1]
+                    ty = trial_latent_space[i][2]
+                    d1 = (tx - x[1])^2 
+                    d2 = (ty - x[2])^2
+                    1/sqrt(d1 + d2)
+                end
+                
+                return out + t
             end
-            if min_dist > max_dist
-                max_dist = min_dist
-                new_s = coord
-            end
+            coord = [res.minimizer[1] < 0 ? res.minimizer[1] + 1 : res.minimizer[1],
+                     res.minimizer[2] < 0 ? res.minimizer[2] + 1 : res.minimizer[2]]
+            push!(potential_intersections, (res.minimum, coord))
+            push!(trial_latent_space, coord)
         end
+    end
+    return potential_intersections
+end
+
+function Overseer.update(::MLTrialGenerator, m::AbstractLedger)
+    potential = potential_trials(m)
+    potential === nothing && return
+    de = decoder(m)
+    model_e = last_entity(m[Model])
+    
+    n_new = 0
+    intersections = sort(potential, by = x->x[1], rev=true)
+    while max_new(m) > 0 && !isempty(intersections)
+        dist, mid = pop!(intersections)
+
+        s = State([features2mat(de(mid))])
         
-        s = State([features2mat(decoder(new_s))])
+        if minimum(s.eigvals[1]) < 0
+            continue
+        end
             
-        c_chance = converge_chance(model_conv, s)
-            
-        # if c_chance < 0.6f0 || any(x->x<0, diag(s.occupations[1])) || any(x -> x < 0, s.eigvals[1])
-        #     continue
-        # end
+        @debug "New ml trial: min dist = $dist"
         # add s to latent space
-        latent_space = hcat(latent_space, new_s)
-        
-        @debug "New ml trial: max dist = $max_dist, conv chance = $conv_chance"
-        
         trial = Trial(s, RomeoDFT.ModelOptimized) # TODO other tag?
-        # add new entity with optimized occ
         new_e = add_search_entity!(m, model_e, trial, m[Generation][model_e])
         m[Model][new_e] = model_e
         n_new += 1

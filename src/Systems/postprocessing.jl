@@ -158,9 +158,12 @@ function Overseer.update(::ResultsProcessor, m::AbstractLedger)
             res = o["scf"]
             results = results_from_output(res, oldest_parent(m, e) in m[BaseCase])
             m[e] = results[1]
+            
+            if e ∉ m[Trial]
+                m[e] = Trial(State(res[:Hubbard][1]), Unknown)
+            end
 
             if length(results) > 1 && results[1].converged
-                
                 for i in 2:length(results)
                     if e in m[Trial] 
                         extra_e = Entity(m, m[Generation][e], Trial(m[Trial][e].state, IntersectionMixed), results[i], Intersection(e.e, e.e), Parents(Set([e.e])), Done(true))
@@ -218,7 +221,7 @@ Takes states newly found by the [`FireFly`](@ref) simulation that are unique and
 After this, the flies themselves are [`Archived`](@ref).
 """
 struct UniqueExplorer <: System end
-Overseer.requested_components(::UniqueExplorer) = (Archived, Intersection, NSCFSettings, ProjwfcSettings, BandsSettings, HPSettings, Child)
+Overseer.requested_components(::UniqueExplorer) = (Archived, Intersection, NSCFSettings, ProjwfcSettings, BandsSettings, HPSettings, Child, ClosestUnique)
 
 function Overseer.update(::UniqueExplorer, m::AbstractLedger)
     if isempty(m[Unique])
@@ -242,11 +245,11 @@ function Overseer.update(::UniqueExplorer, m::AbstractLedger)
             continue
         end
         
-        found = false
+        closest_unique = Entity(-1)
         ebands = bandscomp[e].bands
         @sync for e2 in @safe_entities_in(m, Unique && FlatBands && Results)
             Threads.@spawn begin
-                found && return
+                closest_unique != Entity(-1) && return
                 
                 momdiffs = e2.state.magmoms .- e.state.magmoms
                 sum(abs, momdiffs) >= unique_c.thr && return
@@ -258,13 +261,14 @@ function Overseer.update(::UniqueExplorer, m::AbstractLedger)
                 elseif Euclidean()(e2.state, e.state) >= unique_c.thr
                     return
                 end
-                found = true
+                closest_unique = Entity(e2)
             end
         end
         
-        if found
+        if closest_unique != Entity(-1)
             e ∉ m[BaseCase] && pop!(bandscomp, e)
             m[e] = Done(false)
+            m[e] = ClosestUnique(closest_unique)
             continue
         end
         

@@ -247,4 +247,13 @@ Holds general information on the Searcher.
     n_running_calcs::Int = 0
     n_pending_calcs::Int = 0
 end
+
+"""
+    ClosestUnique
+
+Closest Unique Entity
+"""
+@component struct ClosestUnique
+    e::Entity
+end
 end

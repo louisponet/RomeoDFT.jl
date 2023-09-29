@@ -378,8 +378,8 @@ function setup_structure(structure_file, supercell, primitive; pseudoset=nothing
         str = Structures.create_supercell(str, (supercell .- 1)...)
     end
 
+    loc_server = local_server()
     if pseudoset === nothing
-        loc_server = local_server()
         pseudosets = load(loc_server, PseudoSet(""))
         while isempty(pseudosets)
             @info "No PseudoSets found on Server $(loc_server.name), please configure one now..."
