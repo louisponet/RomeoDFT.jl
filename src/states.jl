@@ -37,7 +37,7 @@ mutable struct State{T<:AbstractFloat,VT,MT}
     eigvals::Vector{VT}
     eigvecs::Vector{MT}
     totoccs::Vector{T}
-    angles::Vector{Angles{T,2,VT}} # These are the angles w.r.t. eigenvectors
+    angles::Vector{Angles{T, VT}} # These are the angles w.r.t. eigenvectors
 end
 
 State() = State(ColinMatrixType[], Float64[], MagneticVectorType[], ColinMatrixType[], Float64[], AnglesType[])
@@ -125,21 +125,21 @@ Base.:(/)(s1::State, f::Number) = State([f / o for o in s1.occupations])
 function EulerAngles.Angles(m::DFWannier.ColinMatrix)
     up = Angles(m[Up()])
     down = Angles(m[Down()])
-    return Angles(DFWannier.MagneticVector([up.θs; down.θs]), 1.0, size(m))
+    return Angles(DFWannier.MagneticVector([up.θs; down.θs]))
 end
 
 function EulerAngles.Angles(m::DFWannier.NonColinMatrix)
     t = Angles(m.data)
-    return Angles(DFWannier.MagneticVector(t.θs), 1.0, size(m))
+    return Angles(DFWannier.MagneticVector(t.θs))
 end
 
-function Base.Matrix(a::Angles{T,2,<:DFWannier.MagneticVector} where {T})
+function Base.Matrix(a::Angles{T, VT} where {T, VT<:DFWannier.MagneticVector})
     if a.n[1] != a.n[2]
-        up = Matrix(Angles(a.θs[Up()], 1.0, (a.n[1], div(a.n[2], 2))))
-        down = Matrix(Angles(a.θs[Down()], 1.0, (a.n[1], div.(a.n[2], 2))))
+        up = Matrix(Angles(a.θs[Up()]))
+        down = Matrix(Angles(a.θs[Down()]))
         return DFWannier.ColinMatrix(up, down)
     else
-        return DFWannier.NonColinMatrix(Matrix(Angles(a.θs.data, a.r, a.n)))
+        return DFWannier.NonColinMatrix(Matrix(Angles(a.θs.data)))
     end
 end
 
@@ -163,7 +163,7 @@ function Distances.evaluate(::EulerDist, a1::Angles, a2::Angles)
     return 1 - s / length(a1.θs)
 end
 
-distance_to_target(states::Vector{State}) = tmap(x -> Euclidean()(x, target), states)
+distance_to_target(states::Vector{State}, target) = tmap(x -> Euclidean()(x, target), states)
 
 function distance_to_target(states)
     target = State(states[1])

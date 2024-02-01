@@ -86,7 +86,6 @@ function setup_scf_for_hp!(m, e, o, insulating_from_hp=false)
             scf_calc[:nbnd] = n_ks
             scf_calc[:startingpot] = "file"
             scf_calc[:startingwfc] = "file"
-            scf_calc[:restart_mode] = "restart"
             delete!(scf_calc, :degauss)
             delete!(scf_calc, :smearing)
         end
@@ -96,9 +95,6 @@ function setup_scf_for_hp!(m, e, o, insulating_from_hp=false)
         end
     end
 
-    if any(x -> DFControl.Calculations.isvcrelax(x), e.job.calculations)
-        scf_calc[:restart_mode] = "restart"
-    end
     
     insert!(e.job.calculations, length(e.job.calculations), scf_calc)
     e.job["hp"].run = true
@@ -123,6 +119,10 @@ function Overseer.update(::HPProcessor, m::AbstractLedger)
                 if setup_scf_for_hp!(m, e, o, true)
                     log(e, "HP: Fermi level shift 0. Creating insulating, 2 step HP job")
                     # Nothing to pop since we just want to rerun starting from the new scf
+                    if RelaxResults in m && e in m[RelaxResults]
+                        # This is to make sure that the last structure is used e.g. when we're vcrelaxing the base case
+                        Structures.update_geometry!(e.job.structure, m[RelaxResults][e].final_structure)
+                    end
                     should_rerun(m, e)
                 else
                     m[e] = Error(e, "Couldn't generate insulating scf for HP")
@@ -151,6 +151,11 @@ function Overseer.update(::HPProcessor, m::AbstractLedger)
             
             if setup_scf_for_hp!(m, e, o)
                 log(e, "HP failed, creating a scf to run before it and try again")
+                # This is to make sure that the last structure is used e.g. when we're vcrelaxing the base case
+                if RelaxResults in m && e in m[RelaxResults]
+                    # This is to make sure that the last structure is used e.g. when we're vcrelaxing the base case
+                    Structures.update_geometry!(e.job.structure, m[RelaxResults][e].final_structure)
+                end
                 should_rerun(m, e)
                 
             elseif e ∉ m[Rerun]

@@ -14,20 +14,27 @@ function Overseer.requested_components(::JobCreator)
 end
 
 function Overseer.update(::JobCreator, m::AbstractLedger)
-    n_current_simjobs   = length(@entities_in(m, SimJob && !Error))
-    max_concurrent_jobs = sum(x -> Server(x.server).max_concurrent_jobs, m[ServerInfo])
-    max_new             = max_concurrent_jobs - n_current_simjobs
+    info = m[SearcherInfo][1]
+    max_new = info.max_concurrent_trials - info.n_running_calcs
 
     tot_new = 0
+    lck = ReentrantLock()
+    info.n_pending_calcs = length(m[Submit])
     # initial job
     @error_capturing_threaded for e in @entities_in(m,
                                                     Template &&
                                                     (BaseCase || SCFSettings || Trial) &&
                                                     !SimJob && !Done)
         if tot_new > max_new && e ∉ m[BaseCase]
+            lock(lck) do
+                info.n_pending_calcs += 1
+            end
             continue
+        else
+            lock(lck) do
+                tot_new += 1
+            end
         end
-        tot_new += 1
 
         scf_calc = deepcopy(e.calculation)
         # Some setup here that's required
@@ -41,6 +48,11 @@ function Overseer.update(::JobCreator, m::AbstractLedger)
                 scf_calc[:system][:Hubbard_occupations] = generate_Hubbard_occupations(m[Trial][e].state,
                                                                                        e.structure)
             end
+
+            # if e in m[Intersection]
+            #     scf_calc[:system][:Hubbard_conv_thr] = 1e-12
+            #     scf_calc[:system][:Hubbard_maxstep] = 10000
+            # end
 
             if e in m[SCFSettings]
                 for (f, v) in e.replacement_flags
@@ -139,6 +151,7 @@ end
 Overseer.requested_components(::JobSubmitter) = (Running, Submitted)
 
 function Overseer.update(::JobSubmitter, m::AbstractLedger)
+    info = m[SearcherInfo][1]
     # We find the server to submit the next batch to by finding the one
     # with the pool with the least entities
     sinfo = m[ServerInfo]
@@ -158,6 +171,8 @@ function Overseer.update(::JobSubmitter, m::AbstractLedger)
     submit_comp = m[Submit]
     pvec = sortperm(Overseer.indices(submit_comp).packed; rev = true)
     permute!(submit_comp, pvec)
+
+    lck = ReentrantLock()
 
     @error_capturing_threaded for e in @safe_entities_in(m, Submit && SimJob)
         sinfo[e] = server_entity
@@ -201,7 +216,7 @@ function Overseer.update(::JobSubmitter, m::AbstractLedger)
         suppress() do
             priority = e in m[NSCFSettings] || e in m[BaseCase] ? server_info.priority + 1 :
                        server_info.priority
-            return submit(e.job; fillexecs = false, versioncheck = false,
+            submit(e.job; fillexecs = false, versioncheck = false,
                           priority = priority)
         end
 
@@ -211,6 +226,9 @@ function Overseer.update(::JobSubmitter, m::AbstractLedger)
         end
 
         set_status!(m, e, Submitted())
+        lock(lck) do
+            info.n_running_calcs += 1
+        end
     end
 end
 
@@ -240,6 +258,7 @@ function Overseer.update(::JobMonitor, m::AbstractLedger)
         end
     end
 
+    lck = ReentrantLock()
     @error_capturing_threaded for e in @safe_entities_in(m,
                                                          SimJob && TimingInfo && !Completed &&
                                                          !Submit && !Pulled)
@@ -275,7 +294,8 @@ function Overseer.update(::JobMonitor, m::AbstractLedger)
             e.current_running = cur_running
 
             # If filesize didn't change for 30min we abort
-            if e.current_runtime > run_check_time && prev_filesize == e.current_filesize
+            if e.current_runtime > 30 && e.current_runtime > run_check_time && prev_filesize == e.current_filesize
+                @debug "Aborting job because $(e.current_runtime) > $run_check_time and $prev_filesize == $(e.current_filesize)"
                 abort(e.job)
                 for c in e.job.calculations
                     if c.name == cur_running
@@ -286,6 +306,7 @@ function Overseer.update(::JobMonitor, m::AbstractLedger)
 
                 maybe_rerun(e,
                             "Aborted and resubmitted job during: $(Client.last_running_calculation(e.job).name).")
+                m[SearcherInfo][1].n_running_calcs -= 1
             end
 
         elseif s == RemoteHPC.Failed
@@ -293,6 +314,7 @@ function Overseer.update(::JobMonitor, m::AbstractLedger)
             if ispath(server, e.remote_dir) && filesize(server, ofile) == 0.0
                 maybe_rerun(e, "Job failed.")
             end
+            m[SearcherInfo][1].n_running_calcs -= 1
 
         elseif s in (RemoteHPC.NodeFail, RemoteHPC.Cancelled)
             maybe_rerun(e,
@@ -300,6 +322,9 @@ function Overseer.update(::JobMonitor, m::AbstractLedger)
 
         elseif isparseable(s)
             set_status!(m, e, Completed())
+            lock(lck) do
+                m[SearcherInfo][1].n_running_calcs -= 1
+            end
         end
         e.cur_time = curt
     end
@@ -436,7 +461,7 @@ Tries to correct some common errors.
 struct ErrorCorrector <: System end
 
 function Overseer.update(::ErrorCorrector, m::AbstractLedger)
-    @error_capturing for e in @safe_entities_in(m, Results && !ShouldRerun)
+    @error_capturing for e in @safe_entities_in(m, Results && !ShouldRerun && !Done)
         if length(e.state.occupations) == 0
             log(e, "ErrorCorrector: has an empty State in Results")
             # This results usually because of some server side issue where something crashed for no reason
@@ -445,7 +470,7 @@ function Overseer.update(::ErrorCorrector, m::AbstractLedger)
                 set_flow!(m[SimJob][e].job, "" => true)
                 should_rerun(m, e)
             end
-        elseif e.constraining_steps == -1
+        elseif e.constraining_steps == -1 && !(e in m[Intersection])
             log(e,
                 "ErrorCorrector: has converged scf while constraints still applied, increasing Hubbard_conv_thr.")
             new_template = deepcopy(m[Template][e])
@@ -480,38 +505,38 @@ function Overseer.requested_components(::Stopper)
     return (Done, SimJob, IntersectionSearcher, Simulation, StopCondition)
 end
 
-function stop_check(maxgen::Int, m::AbstractLedger)
-    stop_condition = singleton(m, StopCondition)
-    if maxgen < stop_condition.n_generations
-        return false, Int[], Int[]
-    end
+function unique_evolution(m::AbstractLedger, maxgen = maximum_generation(m))
     n_unique = zeros(Int, maxgen)
     n_total  = zeros(Int, maxgen)
     for e in @safe_entities_in(m, Results && Generation && !Parent)
         if e in m[Unique] && e.generation != 0
             n_unique[e.generation] += 1
         end
-        if e.generation != 0
+        if e.generation != 0 && e in m[Trial] && m[Trial][e].origin != IntersectionMixed
             n_total[e.generation] += 1
         end
     end
+    return n_unique, n_total
+end
+
+function stop_check(m::AbstractLedger)
+    maxgen = maximum_generation(m)
+    stop_condition = singleton(m, StopCondition)
+    if maxgen < stop_condition.n_generations
+        return false, Int[], Int[]
+    end
+    n_unique, n_total = unique_evolution(m, maxgen)
     n_conseq = 0
     for i in 1:maxgen
         r = n_unique[i] / n_total[i]
         if r < stop_condition.unique_ratio
             n_conseq += 1
-        elseif n_conseq >= stop_condition.n_generations
-            break
         else
             n_conseq = 0
         end
     end
     @debugv 2 "Unique to trial ratio for the last $maxgen generations: $(n_unique./n_total)"
     return n_conseq >= stop_condition.n_generations, n_unique, n_total
-end
-
-function stop_check(m::AbstractLedger)
-    return stop_check(maximum(x -> x.generation, m[Generation]; init = 0), m)
 end
 
 # Check if BaseCase was ran with the magnetizations of the minimum state
@@ -603,9 +628,9 @@ function Overseer.update(::Stopper, m::AbstractLedger)
     end
 
     maxgen = maximum_generation(m)
-    stop_condition_met, n_unique, n_total = stop_check(maxgen, m)
+    stop_condition_met, n_unique, n_total = stop_check(m)
 
-    search_entities = @entities_in(m, Trial && (RandomSearcher || Intersection))
+    search_entities = @entities_in(m, Trial && !Intersection)
     search_done     = all(x -> x in m[Done] || x in m[Error], search_entities)
 
     if (!stop_condition_met && search_done)
@@ -613,6 +638,7 @@ function Overseer.update(::Stopper, m::AbstractLedger)
         prepare(m)
         return
     end
+        
 
     if mode(m) == :postprocess
         all_entities = @entities_in(m, (Trial || BaseCase) && !(Done || Error))

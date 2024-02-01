@@ -33,11 +33,11 @@ cleanup_stage() = Stage(:cleanup, [creation_stage(),
                                    postprocessing_stage(),
                                    finalize_stage()])
 
-intersection_stage() = Stage(:intersection, [Intersector(), RandomTrialGenerator()])
+intersection_stage() = Stage(:intersection, [ModelDataExtractor(), ModelTrainer(), MLTrialGenerator(), RandomTrialGenerator()])
     
 # firefly_stage() = Stage(:firefly, [FireFly(), PostFireflyExplorer(), Archiver()])
 
-search_stage() = Stage(:main, [intersection_stage(), core_stage()])
+search_stage() = Stage(:main, [core_stage(), intersection_stage()])
 
 function set_searcher_stages!(l::AbstractLedger, s::Symbol)
     if s ∈ (:postprocess, :manual)

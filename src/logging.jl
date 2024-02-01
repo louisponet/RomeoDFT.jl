@@ -46,6 +46,21 @@ function Base.lock(f, c::SafeLoggingComponent)
     end
 end
 
+function Base.setindex!(c::SafeLoggingComponent{T, CT} where CT<:Overseer.AbstractComponent{T}, v::T, e::Int) where {T}
+    @debugv 3 if e in c.lc
+        stmsg = process_stacktrace()
+        push!(c.lc[e].logs, "($(now())) -- $stmsg: Setting $T")
+        "$stmsg: $(Entity(e)) - Setting $T"
+    end
+    if e ∉ c.c
+        lock(c) do 
+            return c.c[e] = v
+        end
+    else
+        return c.c[e]=v
+    end
+end
+
 function Base.setindex!(c::SafeLoggingComponent{T}, v::T, e::Overseer.AbstractEntity) where {T}
     @debugv 3 if e in c.lc
         stmsg = process_stacktrace()
@@ -91,7 +106,7 @@ Overseer.npools(c::SafeLoggingComponent, args...) = Overseer.npools(c.c, args...
 Overseer.pools(c::SafeLoggingComponent)           = Overseer.pools(c.c)
 Overseer.pool(c::SafeLoggingComponent, args...)   = Overseer.pool(c.c, args...)
 
-function log(e::Overseer.EntityState, msg::String)
+function log(e::Overseer.EntityState, msg::AbstractString)
     @debugv 3 begin
         stmsg = process_stacktrace()
         debmsg = "$stmsg: $(e.e) -- $msg"
@@ -104,3 +119,4 @@ function log(e::Overseer.EntityState, msg::String)
     logc = e.components[1].lc
     push!(logc[e.e].logs, "$(now()) -- $msg")
 end
+log(m::Searcher, e::AbstractEntity, msg::AbstractString) = log(m[e], msg)

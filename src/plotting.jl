@@ -30,7 +30,7 @@ function plot_states(es::Vector, nat::Int, gs;
                      p = plot(),
                      kwargs...)
                      
-    main_es = filter(x->FlatBands in x, es) 
+    main_es = filter(x->FlatBands in x , es) 
     E_conv_fac = 13.6056980659
     labels = Dict("band_distances" => "\n"*L"\eta\:\textrm{(}n, n_{GS}\textrm{)}",
                   "occupation_distances" => L"d_o\textrm{(}n, n_{GS}\textrm{)}",
@@ -110,7 +110,7 @@ function plot_states(tl::AbstractLedger; unique = false, relaxed = false, unique
     if unique
         es = collect(@entities_in(tl, Unique && Results && FlatBands && !Simulation))
     else
-        es = filter(x -> x.converged, collect(@entities_in(tl, Results && FlatBands && !Simulation)))
+        es = filter(x -> x.converged && (x ∉ tl[Trial] || tl[Trial][x].origin != IntersectionMixed), collect(@entities_in(tl, Results && FlatBands && !Simulation)))
     end
     if relaxed
         es = filter(x -> x ∈ tl[Parent], es)

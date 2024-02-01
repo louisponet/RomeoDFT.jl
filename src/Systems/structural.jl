@@ -71,23 +71,22 @@ function process_structure_update!(m::Searcher, e::AbstractEntity, final_structu
         orig_V   = Structures.volume(orig_str)
         new_V    = Structures.volume(final_structure)
 
-        diff = Structures.ustrip(abs(orig_V - new_V))
+        diff_vol = abs(orig_V - new_V)
+        diff_pos = sum(x -> norm(x[1].position_cart .- x[2].position_cart), zip(orig_str.atoms, final_structure.atoms))
         
-        for (a1, a2) in zip(orig_str.atoms, final_structure.atoms)
-            diff += Structures.ustrip(norm(a1.position_cart .- a2.position_cart))
-        end
-        log(e, "Diff of relaxed structure with original: $diff") 
+        log(e, "Diff of relaxed structure with original: volume $diff_vol; positions $diff_pos") 
         
         # Update structure for possibly rerunning
         new_template = deepcopy(m[Template][e])
         Structures.update_geometry!(new_template.structure, final_structure)
         
         if !isempty(m[BaseCase]) && Entity(oldest_parent(m, e)) == entity(m[BaseCase], 1)
+            log(e, "Updating Structure in template with the relaxed one") 
             search_e = entity(m[StopCondition], 1)
             Structures.update_geometry!(m[Template][search_e].structure, final_structure)
         end
         
-        return diff, new_template
+        return Structures.ustrip(diff_vol) + Structures.ustrip(diff_pos), new_template
     end
 end
 
@@ -161,6 +160,7 @@ function Overseer.update(::RelaxProcessor, m::AbstractLedger)
             m[e] = relres
             
             if diff > e.force_convergence_threshold && (!res[:converged] || !res[:finished])
+                log(e, "Updated structure with latest and rerunning relaxation.")
                 should_rerun(m, e, new_template)
                 continue
                 

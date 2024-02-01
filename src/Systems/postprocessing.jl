@@ -60,8 +60,7 @@ function process_Hubbard(hubbard, target=nothing)
         minid = 0
     end
 
-    state = states[end]
-    (; dists, mindist, minid, state)
+    (; dists, mindist, minid, states)
 end
 
 """
@@ -74,6 +73,7 @@ It creates [`Result`](@ref) and [`BandsResults`](@ref) components for the correc
 struct ResultsProcessor <: System end
 Overseer.requested_components(::ResultsProcessor) = (Error, Unique, FlatBands)
 
+#TODO cleanup
 function results_from_output(res::Dict, basecase=false)
     if haskey(res, :Hubbard) && !isempty(res[:Hubbard][1])
         try
@@ -81,12 +81,41 @@ function results_from_output(res::Dict, basecase=false)
             if !haskey(res, :Hubbard_iterations) && !basecase
                 minid = -1
                 mindist = out.mindist
-                state = out.state
+                states = out.states
             else
                 minid = get(res, :Hubbard_iterations, out.minid)
                 mindist = out.mindist
-                state = out.state
+                states = out.states
             end
+            # accurate_enough = findall(x -> x < 1e-9, res[:accuracy])
+            # if !isempty(accurate_enough)
+            #     t_results = map(accurate_enough) do iteration
+            #         hub_energy     = haskey(res, :Hubbard_energy) ? res[:Hubbard_energy][iteration] : typemax(Float64)
+            #         total_energy   = haskey(res, :total_energy)   ? res[:total_energy][iteration]   : typemax(Float64)
+            #         accuracy       = haskey(res, :accuracy)       ? res[:accuracy][iteration]       : typemax(Float64)
+            #         scf_iterations = iteration
+            #         fermi          = haskey(res, :fermi)          ? res[:fermi]               : 0.0
+            #         converged      = res[:converged]
+            #         Results(states[min(length(states), iteration+2)], minid, mindist, total_energy, hub_energy, scf_iterations,
+            #                                        converged, fermi, accuracy)
+            #     end
+            #     out = Results[t_results[end]]
+            #     for r in view(t_results,1:length(t_results)-1)
+            #         if !any(x->Euclidean()(x.state, r.state) < 1e-1, out)
+            #             push!(out, r)
+            #         end
+            #     end
+            #     return out
+            # end
+            hub_energy     = haskey(res, :Hubbard_energy) ? res[:Hubbard_energy][end] : typemax(Float64)
+            total_energy   = haskey(res, :total_energy)   ? res[:total_energy][end]   : typemax(Float64)
+            accuracy       = haskey(res, :accuracy)       ? res[:accuracy][end]       : typemax(Float64)
+            niterations = haskey(res, :scf_iteration)  ? res[:scf_iteration][end]  : 0
+            fermi          = haskey(res, :fermi)          ? res[:fermi]               : 0.0
+            converged      = res[:converged]
+            return [Results(states[end], minid, mindist, total_energy, hub_energy, niterations,
+                                               converged, fermi, accuracy)]
+            
         catch 
             mindist = typemax(Float64)
             minid   = 0
@@ -100,11 +129,11 @@ function results_from_output(res::Dict, basecase=false)
     hub_energy     = haskey(res, :Hubbard_energy) ? res[:Hubbard_energy][end] : typemax(Float64)
     total_energy   = haskey(res, :total_energy)   ? res[:total_energy][end]   : typemax(Float64)
     accuracy       = haskey(res, :accuracy)       ? res[:accuracy][end]       : typemax(Float64)
-    scf_iterations = haskey(res, :scf_iteration)  ? res[:scf_iteration][end]  : 0
+    niterations = haskey(res, :scf_iteration)  ? res[:scf_iteration][end]  : 0
     fermi          = haskey(res, :fermi)          ? res[:fermi]               : 0.0
     converged      = res[:converged]
-    return Results(state, minid, mindist, total_energy, hub_energy, scf_iterations,
-                                       converged, fermi, accuracy)
+    return [Results(state, minid, mindist, total_energy, hub_energy, niterations,
+                                       converged, fermi, accuracy)]
 end
 
 function hubbard_outputdata(j; calcs = map(x->x.name, j.calculations), kwargs...)
@@ -128,8 +157,23 @@ function Overseer.update(::ResultsProcessor, m::AbstractLedger)
         if !isempty(o)
             res = o["scf"]
             results = results_from_output(res, oldest_parent(m, e) in m[BaseCase])
+            m[e] = results[1]
             
-            m[e] = results
+            if e ∉ m[Trial]
+                m[e] = Trial(State(res[:Hubbard][1]), Unknown)
+            end
+
+            if length(results) > 1 && results[1].converged
+                for i in 2:length(results)
+                    if e in m[Trial] 
+                        extra_e = Entity(m, m[Generation][e], Trial(m[Trial][e].state, IntersectionMixed), results[i], Intersection(e.e, e.e), Parents(Set([e.e])), Done(true))
+                        m[Template][extra_e] = e
+                    else
+                        extra_e = Entity(m, m[Generation][e], results[i], Intersection(e.e, e.e), Parents(Set([e.e])), Done(true))
+                        m[Template][extra_e] = e
+                    end 
+                end
+            end
             
             e.scf_time = haskey(res, :timing) ? Dates.tons(res[:timing][end].wall) / 1e9 : e.running
             
@@ -177,7 +221,7 @@ Takes states newly found by the [`FireFly`](@ref) simulation that are unique and
 After this, the flies themselves are [`Archived`](@ref).
 """
 struct UniqueExplorer <: System end
-Overseer.requested_components(::UniqueExplorer) = (Archived, Intersection, NSCFSettings, ProjwfcSettings, BandsSettings, HPSettings, Child)
+Overseer.requested_components(::UniqueExplorer) = (Archived, Intersection, NSCFSettings, ProjwfcSettings, BandsSettings, HPSettings, Child, ClosestUnique)
 
 function Overseer.update(::UniqueExplorer, m::AbstractLedger)
     if isempty(m[Unique])
@@ -201,11 +245,11 @@ function Overseer.update(::UniqueExplorer, m::AbstractLedger)
             continue
         end
         
-        found = false
+        closest_unique = Entity(-1)
         ebands = bandscomp[e].bands
         @sync for e2 in @safe_entities_in(m, Unique && FlatBands && Results)
             Threads.@spawn begin
-                found && return
+                closest_unique != Entity(-1) && return
                 
                 momdiffs = e2.state.magmoms .- e.state.magmoms
                 sum(abs, momdiffs) >= unique_c.thr && return
@@ -217,13 +261,14 @@ function Overseer.update(::UniqueExplorer, m::AbstractLedger)
                 elseif Euclidean()(e2.state, e.state) >= unique_c.thr
                     return
                 end
-                found = true
+                closest_unique = Entity(e2)
             end
         end
         
-        if found
+        if closest_unique != Entity(-1)
             e ∉ m[BaseCase] && pop!(bandscomp, e)
             m[e] = Done(false)
+            m[e] = ClosestUnique(closest_unique)
             continue
         end
         

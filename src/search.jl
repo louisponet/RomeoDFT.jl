@@ -378,8 +378,8 @@ function setup_structure(structure_file, supercell, primitive; pseudoset=nothing
         str = Structures.create_supercell(str, (supercell .- 1)...)
     end
 
+    loc_server = local_server()
     if pseudoset === nothing
-        loc_server = local_server()
         pseudosets = load(loc_server, PseudoSet(""))
         while isempty(pseudosets)
             @info "No PseudoSets found on Server $(loc_server.name), please configure one now..."
@@ -485,6 +485,7 @@ This is the backend method used for the `romeo searcher create` from the command
 # Control Kwargs
 - `verbosity=0`: the logging verbosity, higher = more. See [Data](@ref) for more info
 - `sleep_time=30`: time in seconds between update polls of the [`Searcher`](@ref)
+- `max_concurrent_trials=10`: amount of trials that are submitted/running to the remote at once
 - `server=nothing`: label of `Server` on which to run everything
 - `exec=nothing`: label of the `pw.x` executable on `server` to use for the search
 - `environment=nothing`: label of the `Environment` to use for running all calculations
@@ -528,6 +529,7 @@ function setup_search(name, scf_file, structure_file = scf_file;
                       α = 0.5,
                       β = 0.5,
                       sleep_time = 30,
+                      max_concurrent_trials = 5,
                       primitive = false,
                       supercell = [1, 1, 1],
                       unique_thr = 1e-2,
@@ -577,6 +579,9 @@ function setup_search(name, scf_file, structure_file = scf_file;
     l = Searcher(; rootdir = dir, sleep_time = sleep_time)
 
     sim_e = Entity(l, setup_ServerInfo(; kwargs...), RandomSearcher(nrand),
+                   TrainerSettings(2000,1.2),
+                   MLTrialSettings(),
+                   SearcherInfo(max_concurrent_trials = max_concurrent_trials),
                    Template(deepcopy(str), deepcopy(calc)),
                    IntersectionSearcher(mindist_ratio, 100),
                    StopCondition(stopping_unique_ratio, stopping_n_generations),
@@ -672,7 +677,7 @@ function write_groundstate(io::IO, l::Searcher)
 end
 
 function plot_evolution(io::IO, l::Searcher; color = true)
-    stop, n_unique, n_total = stop_check(l)
+    n_unique, n_total = unique_evolution(l)
     if length(n_unique) > 1
         p1 = Main.UnicodePlots.lineplot(n_unique ./ n_total; title = "Unique/Trial",
                                         xlabel = "Generation", color = :white)
@@ -705,7 +710,7 @@ function plot_evolution(io::IO, l::Searcher; color = true)
 end
 
 function plot_states(io::IO, l::Searcher)
-    es = filter(x -> x.converged, @entities_in(l, Results && Template))
+    es = filter(x -> x.converged, @entities_in(l, Unique && Results && Template))
     if !isempty(es)
         energies = relative_energies(es)
         magmoms  = map(x -> sum(x.state.magmoms), es)
@@ -737,9 +742,11 @@ function status(io::IO, l::Searcher)
             status = "UNKNOWN"
         end
     end
-    println(io, "Status:        $status")
-    println(io, "Unique states: $(length(l[Unique]))")
-    println(io, "Total Trials:  $(length(@entities_in(l, Results && !Parent)))")
+    println(io, "Status:               $status")
+    println(io, "Unique states:        $(length(l[Unique]))")
+    println(io, "Total Trials:         $(length(@entities_in(l, Results && !Parents))),$(length(filter(x->!x.converged, @entities_in(l, Results && !Parents)))) non-converged")
+    println(io, "Total scf iterations: $(sum(x->x.niterations, l[Results], init=0))")
+    
 
     println(io)
     write_groundstate(io, l)
@@ -841,6 +848,8 @@ function add_search_entity!(m::AbstractLedger, search_e::Overseer.AbstractEntity
         end
     end
     m[Template][e] = search_e
+    info = m[SearcherInfo][1]
+    m[SearcherInfo][1] = SearcherInfo(n_pending_calcs = info.n_pending_calcs + 1, n_running_calcs = info.n_running_calcs, max_concurrent_trials = info.max_concurrent_trials)
     return e
 end
 
@@ -917,6 +926,7 @@ end
 The main loop that executes the global searching.
 """
 function loop(l::Searcher; verbosity = l.verbosity, sleep_time = l.sleep_time)
+    BLAS.set_num_threads(4)
     if verbosity >= 0
         l.verbosity = verbosity
     end
@@ -991,9 +1001,10 @@ function stop_pending_jobs(l)
         Threads.@spawn begin
             if state(e.job) ∈ (RemoteHPC.Pending, RemoteHPC.Submitted)
                 abort(e.job)
-                lock(lck)
-                set_status!(l, e, Submit())
-                unlock(lck)
+                lock(lck) do
+                    l[SearcherInfo][1].n_running_calcs -= 1
+                    set_status!(l, e, Submit())
+                end
             end
         end
     end
@@ -1188,3 +1199,27 @@ function gather_logs(l, e)
 
     return full_log
 end
+
+function max_new(l::Searcher)
+    info = l[SearcherInfo][1]
+    max(0, info.max_concurrent_trials - (info.n_running_calcs + info.n_pending_calcs))
+end
+
+
+function scf_iterations_per_unique(l::Searcher)
+    out = Int[]
+    for e in @entities_in(l, Results && Unique)
+        c = 0
+        for e1 in @entities_in(l, Results)
+            if e1.e.id <= e.e.id
+                c += e1.niterations
+            end
+        end
+        push!(out, c)
+    end
+    out
+end
+        
+
+
+

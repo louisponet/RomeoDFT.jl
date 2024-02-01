@@ -4,6 +4,7 @@ using Reexport
 # @recompile_invalidations begin
     @reexport using DFControl
     import DFControl: Calculation
+    using DFControl.Utils: getfirst
     @reexport using RemoteREPL
     using RemoteHPC
     using RemoteHPC: @timeout, suppress
@@ -24,10 +25,10 @@ using Reexport
     using REPL.TerminalMenus
 
     @reexport using Overseer
-    using Overseer: AbstractEntity
+    using Overseer: AbstractEntity, components
 # end
 
-const AnglesType         = Angles{Float64,2,DFWannier.MagneticVector{Float64, Vector{Float64}}}
+const AnglesType         = Angles{Float64, DFWannier.MagneticVector{Float64, Vector{Float64}}}
 const ColinMatrixType    = DFW.ColinMatrix{Float64, Matrix{Float64}}
 const MagneticVectorType = DFW.MagneticVector{Float64, Vector{Float64}}
 
@@ -43,7 +44,8 @@ include("states.jl")
 const StateType = State{Float64, MagneticVectorType, ColinMatrixType}
 
 include("jobs.jl")
-@enum TrialOrigin RandomMixed EulerAngleMixed LinearMixed PostProcess IntersectionMixed Unknown 
+
+@enum TrialOrigin RandomMixed EulerAngleMixed LinearMixed PostProcess IntersectionMixed ModelOptimized Unknown 
 @enum MixingMode RandomMixing EulerAngleMixing LinearMixing UnknownMixing
 
 include("components.jl")
@@ -51,10 +53,12 @@ include("search.jl")
 include("Systems/core.jl")
 include("Systems/postprocessing.jl")
 # include("Systems/firefly.jl")
+include("Systems/random.jl")
 include("Systems/intersection.jl")
 include("Systems/structural.jl")
 include("Systems/electrides.jl")
 include("Systems/hp.jl")
+include("Systems/model.jl")
 include("stages.jl")
 include("orchestrator.jl")
 include("client.jl")
